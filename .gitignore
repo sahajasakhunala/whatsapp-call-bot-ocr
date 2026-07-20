@@ -1,0 +1,18 @@
+# Virtual Environment
+venv/
+.venv/
+env/
+
+# Python Cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Local Configuration
+whatsapp_config.json
+
+# Local Debug Screenshots
+debug_call_window.png
+debug_ocr_raw.png
+debug_ocr_processed.png
