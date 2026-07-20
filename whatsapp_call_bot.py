@@ -176,7 +176,7 @@ def wait_for_key_press(key_name="Enter", vk_code=0x0D):
     # Clear any previous pressed state
     while ctypes.windll.user32.GetAsyncKeyState(vk_code) & 0x8000:
         time.sleep(0.05)
-    print(f"--> [Waiting for you to press {key_name} on your keyboard...]")
+    print(f"[Keyboard Hook] Waiting for you to press {key_name} on your keyboard...")
     # Wait for key down
     while not (ctypes.windll.user32.GetAsyncKeyState(vk_code) & 0x8000):
         time.sleep(0.05)

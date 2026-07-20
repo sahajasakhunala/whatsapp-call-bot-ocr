@@ -1,10 +1,10 @@
 # WhatsApp Desktop Call Automation Bot
 
-An automated Python script designed to handle calling workflows on the WhatsApp Desktop application for Windows. It utilizes GUI automation, image processing, and Optical Character Recognition (OCR) to initiate calls, detect when the recipient answers, monitor the call duration, and automatically close the call window once the conversation ends.
+An automated Python script designed to handle calling workflows on the WhatsApp Desktop application for Windows. It utilizes GUI automation, image processing, and Optical Recognition (OCR) to initiate calls, detect when the recipient answers, monitor the call duration, and automatically close the call window once the conversation ends.
 
 ---
 
-## 🚀 Features
+## Features
 
 - **Automated Dialing**: Automates the multi-step click sequence required to place a call in WhatsApp Desktop.
 - **Live Connection Detection (OCR)**: Uses Tesseract OCR and OpenCV image processing (upscaling, binarization, and inversion) to read the active call timer (e.g., `00:01`) directly from the screen.
@@ -15,7 +15,7 @@ An automated Python script designed to handle calling workflows on the WhatsApp 
 
 ---
 
-## 🛠️ Technology Stack
+## Technology Stack
 
 - **Python 3**
 - **PyAutoGUI**: For controlling mouse movements and clicks.
@@ -25,7 +25,7 @@ An automated Python script designed to handle calling workflows on the WhatsApp 
 
 ---
 
-## 📋 Prerequisites
+## Prerequisites
 
 1. **WhatsApp Desktop**: Make sure the official WhatsApp Desktop application is installed and logged in on Windows.
 2. **Tesseract-OCR**: Install Google's Tesseract OCR engine on Windows.
@@ -34,12 +34,12 @@ An automated Python script designed to handle calling workflows on the WhatsApp 
 
 ---
 
-## ⚙️ Installation & Setup
+## Installation & Setup
 
 1. **Clone the Repository**:
    ```bash
-   git clone https://github.com/yourusername/whatsapp-call-bot.git
-   cd whatsapp-call-bot
+   git clone https://github.com/sahajasakhunala/whatsapp-call-bot-ocr.git
+   cd whatsapp-call-bot-ocr
    ```
 
 2. **Set up Virtual Environment**:
@@ -55,7 +55,7 @@ An automated Python script designed to handle calling workflows on the WhatsApp 
 
 ---
 
-## 🔧 Calibration & Usage
+## Calibration & Usage
 
 Before running the bot, you need to calibrate it to match your screen layout and resolution.
 
@@ -86,7 +86,7 @@ The bot will take over to click, dial, monitor, alert you upon connection, and c
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 - `whatsapp_call_bot.py`: The main automation script containing calibration, OCR detection, active monitoring, and dialing loops.
 - `debug_call_window.py`: A diagnostic tool to verify the screen coordinates and dimensions of open WhatsApp windows.
@@ -96,5 +96,5 @@ The bot will take over to click, dial, monitor, alert you upon connection, and c
 
 ---
 
-## ⚠️ Disclaimer
+## Disclaimer
 This project is for educational and automation demonstration purposes. Be mindful of rate-limiting policies and use responsibly to avoid spamming contacts.
