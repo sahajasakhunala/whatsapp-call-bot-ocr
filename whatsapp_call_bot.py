@@ -408,43 +408,50 @@ def calibrate_coordinates():
 
     config = load_config()
 
-    print("0. Click on WhatsApp to bring it into focus, then press Enter.")
+    step_num = 1
+
+    print(f"{step_num}. Click on WhatsApp to bring it into focus, then press Enter.")
     wait_for_key_press("Enter", 0x0D)
     print("Calibration started!\n")
+    step_num += 1
 
     # Voice Call Button 1
-    print("1. Hover mouse over the VOICE CALL button (phone icon, top-right).")
+    print(f"{step_num}. Hover mouse over the VOICE CALL button (phone icon, top-right).")
     wait_for_key_press("Enter", 0x0D)
     x, y = pyautogui.position()
     config["call_button_1_coords"] = [x, y]
     print(f"   Captured Voice Call Button 1 at: {x}, {y}\n")
+    step_num += 1
 
     if needs_confirm:
         # Voice Call Button 2
-        print("2. Click the voice call button manually to open the confirmation screen.")
+        print(f"{step_num}. Click the voice call button manually to open the confirmation screen.")
         print("   Hover mouse over the second/confirmation call button.")
         wait_for_key_press("Enter", 0x0D)
         x, y = pyautogui.position()
         config["call_button_2_coords"] = [x, y]
         print(f"   Captured Voice Call Button 2 at: {x}, {y}\n")
+        step_num += 1
     else:
         config["call_button_2_coords"] = None
 
     # Video Call Button 1
-    print("3. Hover over the VIDEO CALL button (camera icon, top-right).")
+    print(f"{step_num}. Hover over the VIDEO CALL button (camera icon, top-right).")
     wait_for_key_press("Enter", 0x0D)
     x, y = pyautogui.position()
     config["video_call_button_1_coords"] = [x, y]
     print(f"   Captured Video Call Button 1 at: {x}, {y}\n")
+    step_num += 1
 
     if needs_confirm:
         # Video Call Button 2
-        print("4. Click the video call button manually to open the confirmation screen.")
+        print(f"{step_num}. Click the video call button manually to open the confirmation screen.")
         print("   Hover mouse over the second/confirmation video call button.")
         wait_for_key_press("Enter", 0x0D)
         x, y = pyautogui.position()
         config["video_call_button_2_coords"] = [x, y]
         print(f"   Captured Video Call Button 2 at: {x}, {y}\n")
+        step_num += 1
     else:
         config["video_call_button_2_coords"] = None
 
