@@ -144,27 +144,38 @@ def force_click(x: int, y: int, hold_duration: float = 0.15):
     import ctypes
     user32 = ctypes.windll.user32
     
+    # Attempt to block all physical user input (Requires script to be run as Administrator)
+    try:
+        user32.BlockInput(True)
+    except Exception:
+        pass
+    
+    MOUSEEVENTF_LEFTDOWN = 0x0002
+    MOUSEEVENTF_LEFTUP = 0x0004
+    
     # 1. Lock position before mouse down
     start_pre = time.time()
     while time.time() - start_pre < 0.1:
         user32.SetCursorPos(int(x), int(y))
         time.sleep(0.01)
         
-    # 2. Press down while continuously forcing cursor location
-    try:
-        pyautogui.mouseDown(x, y)
-    except pyautogui.FailSafeException:
-        pass
+    # 2. Press down using low-level Win32 API to bypass PyAutoGUI failsafe and delays
+    user32.SetCursorPos(int(x), int(y))
+    user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
         
     start_hold = time.time()
     while time.time() - start_hold < hold_duration:
         user32.SetCursorPos(int(x), int(y))
         time.sleep(0.01)
         
-    # 3. Release button
+    # 3. Release button via Win32 API
+    user32.SetCursorPos(int(x), int(y))
+    user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+
+    # Restore physical input
     try:
-        pyautogui.mouseUp(x, y)
-    except pyautogui.FailSafeException:
+        user32.BlockInput(False)
+    except Exception:
         pass
 
 def focus_whatsapp_window() -> bool:
@@ -555,7 +566,7 @@ def run_automation():
             end_x = call_win.left + int(call_win.width * 0.5)
             end_y = call_win.top + int(call_win.height * 0.88)
             logger.info(f"Clicking dynamic End Call button at: {end_x}, {end_y} (Window size: {call_win.width}x{call_win.height})")
-            pyautogui.click(end_x, end_y)
+            force_click(end_x, end_y, hold_duration=0.1)
             time.sleep(1.0)
             # Try to close the window as well since call was unanswered
             try:
@@ -565,7 +576,7 @@ def run_automation():
         else:
             end_x, end_y = config["end_call_coords"]
             logger.info(f"Clicking configured End Call button at: {end_x}, {end_y}")
-            pyautogui.click(end_x, end_y)
+            force_click(end_x, end_y, hold_duration=0.1)
         
         # Cooldown interval (randomized to prevent spam detection/rate limiting)
         cooldown = random.uniform(cooldown_min, cooldown_max)
@@ -592,6 +603,6 @@ def main():
         run_automation()
 
 if __name__ == "__main__":
-    # Prevent PyAutoGUI from freezing the mouse completely if we need to fail-safe exit
-    pyautogui.FAILSAFE = True
+    # Disable PyAutoGUI failsafe entirely so user mouse movements to corners don't crash the script
+    pyautogui.FAILSAFE = False
     main()
