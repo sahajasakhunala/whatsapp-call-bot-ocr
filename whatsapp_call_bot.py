@@ -436,31 +436,37 @@ def run_automation():
         if not focus_whatsapp_window():
             logger.warning("Could not focus WhatsApp. Clicking coordinates blindly...")
         
-        # 2. Make the call with instant clicks
+        # 2. Forcefully take mouse controls and click Call Buttons
         focus_whatsapp_window()
         
         call_1_x, call_1_y = config["call_button_1_coords"]
-        logger.info(f"Clicking Call Button 1 at: {call_1_x}, {call_1_y}")
+        logger.info(f"Taking cursor control -> Call Button 1 at: {call_1_x}, {call_1_y}")
         try:
-            pyautogui.click(call_1_x, call_1_y)
+            pyautogui.moveTo(call_1_x, call_1_y, duration=0.2)
+            pyautogui.mouseDown()
+            time.sleep(0.1)
+            pyautogui.mouseUp()
         except pyautogui.FailSafeException:
             pass
-        time.sleep(1.0)
+        time.sleep(0.8)
         
         call_2_x, call_2_y = config["call_button_2_coords"]
-        logger.info(f"Clicking Call Button 2 at: {call_2_x}, {call_2_y}")
+        logger.info(f"Taking cursor control -> Call Button 2 at: {call_2_x}, {call_2_y}")
         try:
-            pyautogui.click(call_2_x, call_2_y)
+            pyautogui.moveTo(call_2_x, call_2_y, duration=0.2)
+            pyautogui.mouseDown()
+            time.sleep(0.1)
+            pyautogui.mouseUp()
         except pyautogui.FailSafeException:
             pass
             
-        # Wait up to 4 seconds for WhatsApp call window animation to complete
+        # Wait up to 3 seconds for WhatsApp call window animation to complete
         logger.info("Waiting for WhatsApp call window to initialize...")
         start_wait = time.time()
-        while time.time() - start_wait < 4.0:
+        while time.time() - start_wait < 3.0:
             if get_whatsapp_call_window() is not None:
                 break
-            time.sleep(0.4)
+            time.sleep(0.3)
 
         # 3. Monitor for timer
         logger.info(f"Monitoring call timer region for {timeout_seconds} seconds...")
