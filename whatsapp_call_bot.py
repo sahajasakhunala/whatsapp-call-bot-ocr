@@ -307,11 +307,12 @@ def perform_ocr(bbox: dict) -> str:
         try:
             # Force focus to bring the call window to the foreground
             call_win.activate()
-            time.sleep(0.3)  # Give it a brief moment to render in front
+            time.sleep(0.2)
         except Exception:
             pass
-        x = call_win.left + 232
-        y = call_win.top + 495
+        # The call timer is centered horizontally and sits at roughly 61% down the call window height
+        x = call_win.left + int((call_win.width - 120) / 2)
+        y = call_win.top + int(call_win.height * 0.61)
         w = 120
         h = 40
     else:
@@ -359,8 +360,8 @@ def test_ocr_dryrun():
 
     call_win = get_whatsapp_call_window()
     if call_win:
-        x = call_win.left + 232
-        y = call_win.top + 495
+        x = call_win.left + int((call_win.width - 120) / 2)
+        y = call_win.top + int(call_win.height * 0.61)
         w = 120
         h = 40
         print(f"Dynamically resolved Call Window: Left={call_win.left}, Top={call_win.top}, Width={call_win.width}, Height={call_win.height}")
@@ -422,8 +423,8 @@ def run_automation():
     cooldown_min = config.get("cooldown_min_seconds", 2.0)
     cooldown_max = config.get("cooldown_max_seconds", 5.0)
     
-    # Restrict matching to low minutes (00:00 to 05:59) to prevent OCR noise/Calling text misreads
-    timer_pattern = re.compile(r"0[0-5]:\d{2}")
+    # Match standard timer formats like 00:01 or 0:01
+    timer_pattern = re.compile(r"\d{1,2}:\d{2}")
     
     logger.info("Starting WhatsApp Call Automation Bot.")
     logger.info(f"Parameters: max_retries={max_retries}, call_timeout={timeout_seconds}s, cooldown range={cooldown_min}-{cooldown_max}s")
@@ -435,21 +436,41 @@ def run_automation():
         if not focus_whatsapp_window():
             logger.warning("Could not focus WhatsApp. Clicking coordinates blindly...")
         
-        # 2. Make the call
-        # Click Call Button 1
-        call_1_x, call_1_y = config["call_button_1_coords"]
-        logger.info(f"Clicking Call Button 1 at: {call_1_x}, {call_1_y}")
-        pyautogui.click(call_1_x, call_1_y)
-        time.sleep(1.0)  # Wait for transition/secondary screen
+        # 2. Make the call (with verification to prevent user mouse interference)
+        call_initiated = False
+        click_attempts = 0
         
-        # Click Call Button 2 (Call again / Confirmation)
-        call_2_x, call_2_y = config["call_button_2_coords"]
-        logger.info(f"Clicking Call Button 2 at: {call_2_x}, {call_2_y}")
-        pyautogui.click(call_2_x, call_2_y)
-        
-        # Wait a short duration for the call window/screen to initialize
-        time.sleep(3.0)
-        
+        while not call_initiated and click_attempts < 3:
+            click_attempts += 1
+            focus_whatsapp_window()
+            
+            call_1_x, call_1_y = config["call_button_1_coords"]
+            logger.info(f"Clicking Call Button 1 at: {call_1_x}, {call_1_y}")
+            pyautogui.moveTo(call_1_x, call_1_y, duration=0.1)
+            pyautogui.mouseDown()
+            time.sleep(0.08)
+            pyautogui.mouseUp()
+            time.sleep(0.8)
+            
+            call_2_x, call_2_y = config["call_button_2_coords"]
+            logger.info(f"Clicking Call Button 2 at: {call_2_x}, {call_2_y}")
+            pyautogui.moveTo(call_2_x, call_2_y, duration=0.1)
+            pyautogui.mouseDown()
+            time.sleep(0.08)
+            pyautogui.mouseUp()
+            
+            # Check if the call window appeared within 2 seconds
+            start_wait = time.time()
+            while time.time() - start_wait < 2.0:
+                if get_whatsapp_call_window() is not None:
+                    call_initiated = True
+                    break
+                time.sleep(0.3)
+                
+            if not call_initiated:
+                logger.warning("Mouse movement interrupted click (Call window did not open). Retrying click immediately...")
+                time.sleep(0.5)
+
         # 3. Monitor for timer
         logger.info(f"Monitoring call timer region for {timeout_seconds} seconds...")
         call_answered = False
