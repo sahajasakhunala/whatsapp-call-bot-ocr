@@ -9,6 +9,7 @@ import logging
 import winsound
 import ctypes
 import ctypes.wintypes
+import threading
 from pathlib import Path
 
 # Configure logging
@@ -154,38 +155,50 @@ def play_alert_sound(sound_file: str):
         time.sleep(0.1)
 
 def force_click(x: int, y: int, hold_duration: float = 0.15):
-    """Traps the cursor inside a 1-pixel box at (x, y) using ClipCursor, then clicks
-    via raw Win32 mouse_event. The user physically cannot move the mouse away from
-    the target during the click. No admin privileges or hooks required."""
+    """Overwhelms physical mouse input using a dedicated background thread that
+    hammers SetCursorPos with ZERO sleep (thousands of calls/sec), combined with
+    ClipCursor as a secondary trap, and raw Win32 mouse_event for the click.
+    No admin privileges required."""
     user32 = ctypes.windll.user32
+    ix, iy = int(x), int(y)
 
     MOUSEEVENTF_LEFTDOWN = 0x0002
     MOUSEEVENTF_LEFTUP = 0x0004
 
-    # Trap the cursor in a tiny box around the target pixel.
-    # ClipCursor is an OS-level constraint: the cursor CANNOT leave this rectangle
-    # regardless of how much the user moves their physical mouse.
-    clip_rect = RECT(int(x), int(y), int(x) + 1, int(y) + 1)
+    # Shared flag: the background thread runs while this is True
+    active = [True]
+
+    def _cursor_lock_loop():
+        """Background thread: calls SetCursorPos as fast as possible with NO sleep.
+        ctypes calls release the GIL, so this runs truly concurrently."""
+        _user32 = ctypes.windll.user32
+        while active[0]:
+            _user32.SetCursorPos(ix, iy)
+            # NO time.sleep here. Maximum throughput to overwhelm hardware input.
+
+    # Layer 1: ClipCursor to constrain cursor to a tiny box (works when our process has focus)
+    clip_rect = RECT(ix, iy, ix + 1, iy + 1)
     user32.ClipCursor(ctypes.byref(clip_rect))
 
+    # Layer 2: Start a background thread hammering SetCursorPos at full CPU speed
+    lock_thread = threading.Thread(target=_cursor_lock_loop, daemon=True, name="CursorLock")
+    lock_thread.start()
+
     try:
-        # 1. Force cursor to exact position
-        user32.SetCursorPos(int(x), int(y))
+        # Give the lock thread a moment to start hammering
         time.sleep(0.05)
 
-        # 2. Mouse down via raw Win32 API
-        user32.SetCursorPos(int(x), int(y))
+        # Layer 3: Click via raw Win32 mouse_event (not pyautogui)
         user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
-
-        # 3. Hold the click
         time.sleep(hold_duration)
-
-        # 4. Release
-        user32.SetCursorPos(int(x), int(y))
         user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+
+        # Small delay to let the click register before releasing locks
         time.sleep(0.05)
     finally:
-        # ALWAYS release the cursor trap, even if an error occurs
+        # Stop the background thread and release ClipCursor
+        active[0] = False
+        lock_thread.join(timeout=1.0)
         user32.ClipCursor(None)
 
 def focus_whatsapp_window() -> bool:
