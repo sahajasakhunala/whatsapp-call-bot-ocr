@@ -154,52 +154,20 @@ def play_alert_sound(sound_file: str):
         winsound.Beep(1000, 500)  # 1000Hz frequency, 500ms duration
         time.sleep(0.1)
 
-def force_click(x: int, y: int, hold_duration: float = 0.15):
-    """Overwhelms physical mouse input using a dedicated background thread that
-    hammers SetCursorPos with ZERO sleep (thousands of calls/sec), combined with
-    ClipCursor as a secondary trap, and raw Win32 mouse_event for the click.
-    No admin privileges required."""
+def force_click(x: int, y: int, hold_duration: float = 0.12):
+    """Positions the cursor at (x, y) via Win32 SetCursorPos and executes a hardware-level left click."""
     user32 = ctypes.windll.user32
     ix, iy = int(x), int(y)
 
     MOUSEEVENTF_LEFTDOWN = 0x0002
     MOUSEEVENTF_LEFTUP = 0x0004
 
-    # Shared flag: the background thread runs while this is True
-    active = [True]
-
-    def _cursor_lock_loop():
-        """Background thread: calls SetCursorPos as fast as possible with NO sleep.
-        ctypes calls release the GIL, so this runs truly concurrently."""
-        _user32 = ctypes.windll.user32
-        while active[0]:
-            _user32.SetCursorPos(ix, iy)
-            # NO time.sleep here. Maximum throughput to overwhelm hardware input.
-
-    # Layer 1: ClipCursor to constrain cursor to a tiny box (works when our process has focus)
-    clip_rect = RECT(ix, iy, ix + 1, iy + 1)
-    user32.ClipCursor(ctypes.byref(clip_rect))
-
-    # Layer 2: Start a background thread hammering SetCursorPos at full CPU speed
-    lock_thread = threading.Thread(target=_cursor_lock_loop, daemon=True, name="CursorLock")
-    lock_thread.start()
-
-    try:
-        # Give the lock thread a moment to start hammering
-        time.sleep(0.05)
-
-        # Layer 3: Click via raw Win32 mouse_event (not pyautogui)
-        user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
-        time.sleep(hold_duration)
-        user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
-
-        # Small delay to let the click register before releasing locks
-        time.sleep(0.05)
-    finally:
-        # Stop the background thread and release ClipCursor
-        active[0] = False
-        lock_thread.join(timeout=1.0)
-        user32.ClipCursor(None)
+    user32.SetCursorPos(ix, iy)
+    time.sleep(0.02)
+    user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+    time.sleep(hold_duration)
+    user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+    time.sleep(0.02)
 
 def focus_whatsapp_window() -> bool:
     """Finds, maximizes, and activates the WhatsApp window. Returns True if successful."""
@@ -502,12 +470,12 @@ def run_automation():
         focus_whatsapp_window()
         
         call_1_x, call_1_y = config["call_button_1_coords"]
-        logger.info(f"Forcefully locking cursor -> Call Button 1 at: {call_1_x}, {call_1_y}")
+        logger.info(f"Clicking Call Button 1 at: {call_1_x}, {call_1_y}")
         force_click(call_1_x, call_1_y, hold_duration=0.12)
         time.sleep(0.8)
         
         call_2_x, call_2_y = config["call_button_2_coords"]
-        logger.info(f"Forcefully locking cursor -> Call Button 2 at: {call_2_x}, {call_2_y}")
+        logger.info(f"Clicking Call Button 2 at: {call_2_x}, {call_2_y}")
         force_click(call_2_x, call_2_y, hold_duration=0.12)
             
         # Wait up to 3 seconds for WhatsApp call window animation to complete
