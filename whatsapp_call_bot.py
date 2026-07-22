@@ -9,7 +9,6 @@ import logging
 import winsound
 import ctypes
 import ctypes.wintypes
-import threading
 from pathlib import Path
 
 # Configure logging
@@ -68,79 +67,15 @@ DEFAULT_CONFIG = {
 }
 
 # ---------------------------------------------------------------------------
-# Low-Level Mouse Hook (WH_MOUSE_LL)
-# Intercepts raw hardware mouse movement/click events at the OS driver level.
-# When _block_mouse is True, every physical mouse event is swallowed (return 1)
-# so the cursor cannot move and user clicks are ignored.
-# Does NOT require Administrator privileges.
+# Win32 RECT structure for ClipCursor API
 # ---------------------------------------------------------------------------
-WH_MOUSE_LL = 14
-HC_ACTION = 0
-
-# Callback signature: LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam)
-HOOKPROC = ctypes.CFUNCTYPE(
-    ctypes.c_long,
-    ctypes.c_int,
-    ctypes.wintypes.WPARAM,
-    ctypes.wintypes.LPARAM,
-)
-
-_block_mouse = False
-_hook_handle = None
-_hook_thread = None
-_hook_ready = threading.Event()
-
-def _mouse_hook_callback(nCode, wParam, lParam):
-    """Low-level mouse hook procedure. Returns 1 to swallow the event when blocking is active."""
-    if nCode >= 0 and _block_mouse:
-        return 1  # Swallow: event never reaches any application or the cursor
-    return ctypes.windll.user32.CallNextHookEx(_hook_handle, nCode, wParam, lParam)
-
-# Must keep a live reference so the garbage collector does not destroy the callback
-_hook_proc_ref = HOOKPROC(_mouse_hook_callback)
-
-def _hook_thread_func():
-    """Installs the hook and runs a Windows message pump on a background thread."""
-    global _hook_handle
-    user32 = ctypes.windll.user32
-    kernel32 = ctypes.windll.kernel32
-
-    _hook_handle = user32.SetWindowsHookExW(
-        WH_MOUSE_LL,
-        _hook_proc_ref,
-        kernel32.GetModuleHandleW(None),
-        0,
-    )
-    if not _hook_handle:
-        logger.warning("Failed to install low-level mouse hook (SetWindowsHookExW returned NULL).")
-        _hook_ready.set()
-        return
-
-    logger.info("Low-level mouse hook installed successfully.")
-    _hook_ready.set()
-
-    # Pump messages so the hook callback fires
-    msg = ctypes.wintypes.MSG()
-    while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
-        user32.TranslateMessage(ctypes.byref(msg))
-        user32.DispatchMessageW(ctypes.byref(msg))
-
-def start_mouse_hook():
-    """Start the low-level mouse hook on a daemon thread (call once at startup)."""
-    global _hook_thread
-    if _hook_thread is not None and _hook_thread.is_alive():
-        return  # Already running
-    _hook_ready.clear()
-    _hook_thread = threading.Thread(target=_hook_thread_func, daemon=True, name="MouseHook")
-    _hook_thread.start()
-    _hook_ready.wait(timeout=2.0)  # Wait for hook installation
-
-def stop_mouse_hook():
-    """Remove the hook (called on exit)."""
-    global _hook_handle
-    if _hook_handle:
-        ctypes.windll.user32.UnhookWindowsHookEx(_hook_handle)
-        _hook_handle = None
+class RECT(ctypes.Structure):
+    _fields_ = [
+        ("left", ctypes.c_long),
+        ("top", ctypes.c_long),
+        ("right", ctypes.c_long),
+        ("bottom", ctypes.c_long),
+    ]
 
 
 def find_tesseract_path() -> str:
@@ -219,40 +154,39 @@ def play_alert_sound(sound_file: str):
         time.sleep(0.1)
 
 def force_click(x: int, y: int, hold_duration: float = 0.15):
-    """Locks cursor to (x, y) by activating the low-level mouse hook to swallow all
-    physical mouse input, then performs a hardware-level click via Win32 mouse_event.
-    Physical mouse movement and clicks are completely blocked for the duration."""
-    global _block_mouse
+    """Traps the cursor inside a 1-pixel box at (x, y) using ClipCursor, then clicks
+    via raw Win32 mouse_event. The user physically cannot move the mouse away from
+    the target during the click. No admin privileges or hooks required."""
     user32 = ctypes.windll.user32
 
     MOUSEEVENTF_LEFTDOWN = 0x0002
     MOUSEEVENTF_LEFTUP = 0x0004
 
-    # Activate the hook block: from this point, ALL physical mouse events are swallowed
-    _block_mouse = True
+    # Trap the cursor in a tiny box around the target pixel.
+    # ClipCursor is an OS-level constraint: the cursor CANNOT leave this rectangle
+    # regardless of how much the user moves their physical mouse.
+    clip_rect = RECT(int(x), int(y), int(x) + 1, int(y) + 1)
+    user32.ClipCursor(ctypes.byref(clip_rect))
 
     try:
-        # 1. Lock cursor to target position (SetCursorPos is a software call, unaffected by the hook)
-        for _ in range(15):
-            user32.SetCursorPos(int(x), int(y))
-            time.sleep(0.008)
+        # 1. Force cursor to exact position
+        user32.SetCursorPos(int(x), int(y))
+        time.sleep(0.05)
 
-        # 2. Mouse down via raw Win32 hardware event injection
+        # 2. Mouse down via raw Win32 API
         user32.SetCursorPos(int(x), int(y))
         user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
 
-        # 3. Hold while continuously forcing cursor position
-        start_hold = time.time()
-        while time.time() - start_hold < hold_duration:
-            user32.SetCursorPos(int(x), int(y))
-            time.sleep(0.008)
+        # 3. Hold the click
+        time.sleep(hold_duration)
 
         # 4. Release
         user32.SetCursorPos(int(x), int(y))
         user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+        time.sleep(0.05)
     finally:
-        # ALWAYS restore physical mouse input, even if an error occurs
-        _block_mouse = False
+        # ALWAYS release the cursor trap, even if an error occurs
+        user32.ClipCursor(None)
 
 def focus_whatsapp_window() -> bool:
     """Finds, maximizes, and activates the WhatsApp window. Returns True if successful."""
@@ -526,9 +460,6 @@ def test_ocr_dryrun():
 
 def run_automation():
     """Main execution loop to dial and monitor calls."""
-    # Install the low-level mouse hook so force_click can block physical input
-    start_mouse_hook()
-    
     config = load_config()
     
     # Validate coordinate configs
@@ -684,9 +615,4 @@ def main():
 if __name__ == "__main__":
     # Disable PyAutoGUI failsafe entirely so user mouse movements to corners don't crash the script
     pyautogui.FAILSAFE = False
-    import atexit
-    atexit.register(stop_mouse_hook)
-    try:
-        main()
-    finally:
-        stop_mouse_hook()
+    main()
