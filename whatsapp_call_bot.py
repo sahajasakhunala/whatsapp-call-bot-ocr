@@ -139,6 +139,34 @@ def play_alert_sound(sound_file: str):
         winsound.Beep(1000, 500)  # 1000Hz frequency, 500ms duration
         time.sleep(0.1)
 
+def force_click(x: int, y: int, hold_duration: float = 0.15):
+    """Forcefully locks the cursor to (x, y) continuously via Win32 SetCursorPos to override physical user mouse movement, then clicks."""
+    import ctypes
+    user32 = ctypes.windll.user32
+    
+    # 1. Lock position before mouse down
+    start_pre = time.time()
+    while time.time() - start_pre < 0.1:
+        user32.SetCursorPos(int(x), int(y))
+        time.sleep(0.01)
+        
+    # 2. Press down while continuously forcing cursor location
+    try:
+        pyautogui.mouseDown(x, y)
+    except pyautogui.FailSafeException:
+        pass
+        
+    start_hold = time.time()
+    while time.time() - start_hold < hold_duration:
+        user32.SetCursorPos(int(x), int(y))
+        time.sleep(0.01)
+        
+    # 3. Release button
+    try:
+        pyautogui.mouseUp(x, y)
+    except pyautogui.FailSafeException:
+        pass
+
 def focus_whatsapp_window() -> bool:
     """Finds, maximizes, and activates the WhatsApp window. Returns True if successful."""
     windows = gw.getWindowsWithTitle("WhatsApp")
@@ -440,25 +468,13 @@ def run_automation():
         focus_whatsapp_window()
         
         call_1_x, call_1_y = config["call_button_1_coords"]
-        logger.info(f"Taking cursor control -> Call Button 1 at: {call_1_x}, {call_1_y}")
-        try:
-            pyautogui.moveTo(call_1_x, call_1_y, duration=0.2)
-            pyautogui.mouseDown()
-            time.sleep(0.1)
-            pyautogui.mouseUp()
-        except pyautogui.FailSafeException:
-            pass
+        logger.info(f"Forcefully locking cursor -> Call Button 1 at: {call_1_x}, {call_1_y}")
+        force_click(call_1_x, call_1_y, hold_duration=0.12)
         time.sleep(0.8)
         
         call_2_x, call_2_y = config["call_button_2_coords"]
-        logger.info(f"Taking cursor control -> Call Button 2 at: {call_2_x}, {call_2_y}")
-        try:
-            pyautogui.moveTo(call_2_x, call_2_y, duration=0.2)
-            pyautogui.mouseDown()
-            time.sleep(0.1)
-            pyautogui.mouseUp()
-        except pyautogui.FailSafeException:
-            pass
+        logger.info(f"Forcefully locking cursor -> Call Button 2 at: {call_2_x}, {call_2_y}")
+        force_click(call_2_x, call_2_y, hold_duration=0.12)
             
         # Wait up to 3 seconds for WhatsApp call window animation to complete
         logger.info("Waiting for WhatsApp call window to initialize...")
