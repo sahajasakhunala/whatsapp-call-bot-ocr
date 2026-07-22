@@ -525,11 +525,12 @@ def run_automation():
     print("="*55)
     
     default_contact = config.get("contact_name", "").strip()
-    prompt_contact = input(f"1. Who do you want to call? (Press Enter to use '{default_contact}' or leave empty for current chat):\n> ").strip()
+    contact_name_display = f"'{default_contact}'" if default_contact else "currently open chat"
+    prompt_contact = input(f"1. Contact Name (Type name OR press Enter to use {contact_name_display}):\n> ").strip()
     contact_name = prompt_contact if prompt_contact else default_contact
 
     default_type = config.get("call_type", "voice").lower().strip()
-    prompt_type = input(f"2. Voice or Video call? [voice/video] (Press Enter for '{default_type}'):\n> ").strip().lower()
+    prompt_type = input(f"2. Call Type (Type 'voice' or 'video' OR press Enter for '{default_type}'):\n> ").strip().lower()
     call_type = prompt_type if prompt_type in ['voice', 'video'] else default_type
     
     print("="*55 + "\n")
