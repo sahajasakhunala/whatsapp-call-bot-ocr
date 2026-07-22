@@ -399,10 +399,12 @@ def calibrate_coordinates():
     print("\n" + "="*55)
     print("       WHATSAPP CALL BOT - CALIBRATION MODE       ")
     print("="*55)
-    print("This mode records screen coordinates for clicks.")
+    
+    confirm_input = input("Does your WhatsApp require a confirmation/second click to start a call? [y/n] (default: n):\n> ").strip().lower()
+    needs_confirm = (confirm_input == "y")
+
+    print("\nThis mode records screen coordinates for clicks.")
     print("Hover your mouse over each item and press Enter.\n")
-    print("NOTE: Calibrate BOTH voice and video call buttons if you")
-    print("      plan to use call_type switching in config.\n")
 
     config = load_config()
 
@@ -417,31 +419,37 @@ def calibrate_coordinates():
     config["call_button_1_coords"] = [x, y]
     print(f"   Captured Voice Call Button 1 at: {x}, {y}\n")
 
-    # Voice Call Button 2
-    print("2. Click the voice call button manually to open the confirmation screen.")
-    print("   Hover mouse over the second/confirmation call button.")
-    wait_for_key_press("Enter", 0x0D)
-    x, y = pyautogui.position()
-    config["call_button_2_coords"] = [x, y]
-    print(f"   Captured Voice Call Button 2 at: {x}, {y}\n")
+    if needs_confirm:
+        # Voice Call Button 2
+        print("2. Click the voice call button manually to open the confirmation screen.")
+        print("   Hover mouse over the second/confirmation call button.")
+        wait_for_key_press("Enter", 0x0D)
+        x, y = pyautogui.position()
+        config["call_button_2_coords"] = [x, y]
+        print(f"   Captured Voice Call Button 2 at: {x}, {y}\n")
+    else:
+        config["call_button_2_coords"] = None
 
     # Video Call Button 1
-    print("3. Press Esc or close the call, then hover over the VIDEO CALL button (camera icon).")
+    print("3. Hover over the VIDEO CALL button (camera icon, top-right).")
     wait_for_key_press("Enter", 0x0D)
     x, y = pyautogui.position()
     config["video_call_button_1_coords"] = [x, y]
     print(f"   Captured Video Call Button 1 at: {x}, {y}\n")
 
-    # Video Call Button 2
-    print("4. Click the video call button manually to open the confirmation screen.")
-    print("   Hover mouse over the second/confirmation video call button.")
-    wait_for_key_press("Enter", 0x0D)
-    x, y = pyautogui.position()
-    config["video_call_button_2_coords"] = [x, y]
-    print(f"   Captured Video Call Button 2 at: {x}, {y}\n")
+    if needs_confirm:
+        # Video Call Button 2
+        print("4. Click the video call button manually to open the confirmation screen.")
+        print("   Hover mouse over the second/confirmation video call button.")
+        wait_for_key_press("Enter", 0x0D)
+        x, y = pyautogui.position()
+        config["video_call_button_2_coords"] = [x, y]
+        print(f"   Captured Video Call Button 2 at: {x}, {y}\n")
+    else:
+        config["video_call_button_2_coords"] = None
 
     save_config(config)
-    print("Calibration complete! Voice and video call coordinates saved.")
+    print("Calibration complete! Coordinates saved.")
     print("You can verify OCR using: python whatsapp_call_bot.py --test-ocr")
     print("="*55 + "\n")
 
@@ -577,13 +585,13 @@ def run_automation():
         call_1_x, call_1_y = btn1_coords
         logger.info(f"Clicking Call Button 1 at: {call_1_x}, {call_1_y}")
         force_click(call_1_x, call_1_y, hold_duration=0.12)
-        time.sleep(0.8)
 
-        check_stop()
-
-        call_2_x, call_2_y = btn2_coords
-        logger.info(f"Clicking Call Button 2 at: {call_2_x}, {call_2_y}")
-        force_click(call_2_x, call_2_y, hold_duration=0.12)
+        if btn2_coords:
+            time.sleep(0.8)
+            check_stop()
+            call_2_x, call_2_y = btn2_coords
+            logger.info(f"Clicking Call Button 2 at: {call_2_x}, {call_2_y}")
+            force_click(call_2_x, call_2_y, hold_duration=0.12)
 
         # Wait up to 3 seconds for the call window to appear
         logger.info("Waiting for WhatsApp call window to initialize...")
