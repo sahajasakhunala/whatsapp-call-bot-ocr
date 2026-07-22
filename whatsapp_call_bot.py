@@ -436,40 +436,31 @@ def run_automation():
         if not focus_whatsapp_window():
             logger.warning("Could not focus WhatsApp. Clicking coordinates blindly...")
         
-        # 2. Make the call (with verification to prevent user mouse interference)
-        call_initiated = False
-        click_attempts = 0
+        # 2. Make the call with instant clicks
+        focus_whatsapp_window()
         
-        while not call_initiated and click_attempts < 3:
-            click_attempts += 1
-            focus_whatsapp_window()
+        call_1_x, call_1_y = config["call_button_1_coords"]
+        logger.info(f"Clicking Call Button 1 at: {call_1_x}, {call_1_y}")
+        try:
+            pyautogui.click(call_1_x, call_1_y)
+        except pyautogui.FailSafeException:
+            pass
+        time.sleep(1.0)
+        
+        call_2_x, call_2_y = config["call_button_2_coords"]
+        logger.info(f"Clicking Call Button 2 at: {call_2_x}, {call_2_y}")
+        try:
+            pyautogui.click(call_2_x, call_2_y)
+        except pyautogui.FailSafeException:
+            pass
             
-            call_1_x, call_1_y = config["call_button_1_coords"]
-            logger.info(f"Clicking Call Button 1 at: {call_1_x}, {call_1_y}")
-            pyautogui.moveTo(call_1_x, call_1_y, duration=0.1)
-            pyautogui.mouseDown()
-            time.sleep(0.08)
-            pyautogui.mouseUp()
-            time.sleep(0.8)
-            
-            call_2_x, call_2_y = config["call_button_2_coords"]
-            logger.info(f"Clicking Call Button 2 at: {call_2_x}, {call_2_y}")
-            pyautogui.moveTo(call_2_x, call_2_y, duration=0.1)
-            pyautogui.mouseDown()
-            time.sleep(0.08)
-            pyautogui.mouseUp()
-            
-            # Check if the call window appeared within 2 seconds
-            start_wait = time.time()
-            while time.time() - start_wait < 2.0:
-                if get_whatsapp_call_window() is not None:
-                    call_initiated = True
-                    break
-                time.sleep(0.3)
-                
-            if not call_initiated:
-                logger.warning("Mouse movement interrupted click (Call window did not open). Retrying click immediately...")
-                time.sleep(0.5)
+        # Wait up to 4 seconds for WhatsApp call window animation to complete
+        logger.info("Waiting for WhatsApp call window to initialize...")
+        start_wait = time.time()
+        while time.time() - start_wait < 4.0:
+            if get_whatsapp_call_window() is not None:
+                break
+            time.sleep(0.4)
 
         # 3. Monitor for timer
         logger.info(f"Monitoring call timer region for {timeout_seconds} seconds...")
