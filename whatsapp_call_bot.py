@@ -205,17 +205,14 @@ def play_alert_sound(sound_file: str):
         time.sleep(0.1)
 
 def force_click(x: int, y: int, hold_duration: float = 0.12):
-    """Positions the cursor at (x, y) via Win32 SetCursorPos and executes a hardware-level left click."""
-    user32 = ctypes.windll.user32
-    ix, iy = int(x), int(y)
-    MOUSEEVENTF_LEFTDOWN = 0x0002
-    MOUSEEVENTF_LEFTUP   = 0x0004
-    user32.SetCursorPos(ix, iy)
-    time.sleep(0.02)
-    user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+    """Positions the cursor at (x, y), waits briefly for UI hover state to register, and executes a click."""
+    pyautogui.moveTo(x, y)
+    # Crucial: Wait a moment for Electron/Web UI to register the hover state before clicking
+    time.sleep(0.15)
+    pyautogui.mouseDown()
     time.sleep(hold_duration)
-    user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
-    time.sleep(0.02)
+    pyautogui.mouseUp()
+    time.sleep(0.05)
 
 
 # ---------------------------------------------------------------------------
@@ -521,18 +518,31 @@ def run_automation():
     cooldown_min   = config.get("cooldown_min_seconds", 2.0)
     cooldown_max   = config.get("cooldown_max_seconds", 5.0)
     sound_file     = config.get("sound_file", "")
-    call_type      = config.get("call_type", "voice").lower().strip()
-    contact_name   = config.get("contact_name", "").strip()
+    
+    # Interactive Prompts
+    print("\n" + "="*55)
+    print("            WHATSAPP CALL BOT SETUP            ")
+    print("="*55)
+    
+    default_contact = config.get("contact_name", "").strip()
+    prompt_contact = input(f"1. Who do you want to call? (Press Enter to use '{default_contact}' or leave empty for current chat):\n> ").strip()
+    contact_name = prompt_contact if prompt_contact else default_contact
+
+    default_type = config.get("call_type", "voice").lower().strip()
+    prompt_type = input(f"2. Voice or Video call? [voice/video] (Press Enter for '{default_type}'):\n> ").strip().lower()
+    call_type = prompt_type if prompt_type in ['voice', 'video'] else default_type
+    
+    print("="*55 + "\n")
 
     # Feature 3: Call Type Toggle — pick the right button coords
     if call_type == "video":
         btn1_coords = config.get("video_call_button_1_coords", config["call_button_1_coords"])
         btn2_coords = config.get("video_call_button_2_coords", config["call_button_2_coords"])
-        logger.info("Call type: VIDEO")
+        logger.info("Call type selected: VIDEO")
     else:
         btn1_coords = config["call_button_1_coords"]
         btn2_coords = config["call_button_2_coords"]
-        logger.info("Call type: VOICE")
+        logger.info("Call type selected: VOICE")
 
     timer_pattern = re.compile(r"\d{1,2}:\d{2}")
 
