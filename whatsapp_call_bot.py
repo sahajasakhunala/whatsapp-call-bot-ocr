@@ -40,7 +40,14 @@ try:
 except ImportError:
     logger.warning("playsound library is not installed or failed to import. Falling back to winsound.")
 
+# ---------------------------------------------------------------------------
+# Global stop flag — set to True when user presses Esc anywhere
+# ---------------------------------------------------------------------------
+_stop_requested = False
+
+# ---------------------------------------------------------------------------
 # Default configuration parameters
+# ---------------------------------------------------------------------------
 CONFIG_FILE = Path("whatsapp_config.json")
 DEFAULT_TESSERACT_PATHS = [
     r"C:\Program Files\Tesseract-OCR\tesseract.exe",
@@ -50,25 +57,29 @@ DEFAULT_TESSERACT_PATHS = [
 ]
 
 DEFAULT_CONFIG = {
-    "call_button_1_coords": [1000, 100],  # Default placeholders, must calibrate
-    "call_button_2_coords": [1000, 150],  # Default placeholders, must calibrate
-    "end_call_coords": [960, 800],      # Default placeholders, must calibrate
+    "call_button_1_coords": [1000, 100],
+    "call_button_2_coords": [1000, 150],
+    "video_call_button_1_coords": [1000, 100],
+    "video_call_button_2_coords": [1000, 150],
+    "end_call_coords": [960, 800],
     "timer_bbox": {
         "x": 920,
         "y": 750,
         "w": 80,
         "h": 30
     },
-    "timeout_seconds": 20,
+    "timeout_seconds": 7,
     "max_retries": 10,
     "cooldown_min_seconds": 2.0,
     "cooldown_max_seconds": 5.0,
     "tesseract_cmd": "",
-    "sound_file": ""
+    "sound_file": "",
+    "call_type": "voice",
+    "contact_name": ""
 }
 
 # ---------------------------------------------------------------------------
-# Win32 RECT structure for ClipCursor API
+# Win32 RECT structure
 # ---------------------------------------------------------------------------
 class RECT(ctypes.Structure):
     _fields_ = [
@@ -79,15 +90,48 @@ class RECT(ctypes.Structure):
     ]
 
 
+# ---------------------------------------------------------------------------
+# Global Esc Hotkey Listener
+# Runs on a background daemon thread. Sets _stop_requested = True on Esc press.
+# ---------------------------------------------------------------------------
+VK_ESCAPE = 0x1B
+
+def _esc_listener_loop():
+    """Background thread: polls GetAsyncKeyState for Esc press. No focus required."""
+    global _stop_requested
+    user32 = ctypes.windll.user32
+    # Wait for any previous Esc key press to clear
+    while user32.GetAsyncKeyState(VK_ESCAPE) & 0x8000:
+        time.sleep(0.05)
+    while True:
+        if user32.GetAsyncKeyState(VK_ESCAPE) & 0x8000:
+            _stop_requested = True
+            logger.warning("Esc pressed. Stopping bot after current operation...")
+            return
+        time.sleep(0.05)
+
+def start_esc_listener():
+    """Start the background Esc key listener thread."""
+    t = threading.Thread(target=_esc_listener_loop, daemon=True, name="EscListener")
+    t.start()
+
+def check_stop():
+    """Call this at safe points in the loop. Exits cleanly if Esc was pressed."""
+    if _stop_requested:
+        logger.info("Bot stopped by user (Esc key). Exiting cleanly.")
+        sys.exit(0)
+
+
+# ---------------------------------------------------------------------------
+# Core utility functions
+# ---------------------------------------------------------------------------
+
 def find_tesseract_path() -> str:
     """Attempts to find the Tesseract OCR executable on a Windows system."""
-    # Check if 'tesseract' is in system PATH
     import shutil
     tess_in_path = shutil.which("tesseract")
     if tess_in_path:
         return tess_in_path
-
-    # Check common installation locations
     import getpass
     username = getpass.getuser()
     for path_template in DEFAULT_TESSERACT_PATHS:
@@ -95,7 +139,6 @@ def find_tesseract_path() -> str:
         path = Path(path_str)
         if path.exists():
             return str(path)
-    
     return ""
 
 def load_config() -> dict:
@@ -105,17 +148,19 @@ def load_config() -> dict:
         try:
             with open(CONFIG_FILE, "r") as f:
                 loaded = json.load(f)
-                # Merge loaded config, ensuring we preserve default fields
                 for k, v in loaded.items():
-                    if k in config:
-                        config[k] = v
+                    config[k] = v
             logger.info("Successfully loaded configuration from whatsapp_config.json")
         except Exception as e:
             logger.warning(f"Failed to read config file: {e}. Using defaults.")
     else:
         logger.info("Configuration file not found. Using default profile.")
 
-    # Auto-resolve Tesseract path if not explicitly configured
+    # Inject any missing default keys without overwriting existing ones
+    for k, v in DEFAULT_CONFIG.items():
+        if k not in config:
+            config[k] = v
+
     if not config.get("tesseract_cmd"):
         resolved_path = find_tesseract_path()
         if resolved_path:
@@ -125,7 +170,6 @@ def load_config() -> dict:
             logger.warning("Could not auto-detect Tesseract OCR path. Tesseract must be in your PATH or configured manually.")
             config["tesseract_cmd"] = "tesseract"
 
-    # Configure pytesseract path
     pytesseract.pytesseract.tesseract_cmd = config["tesseract_cmd"]
     return config
 
@@ -139,29 +183,33 @@ def save_config(config: dict):
         logger.error(f"Failed to save configuration: {e}")
 
 def play_alert_sound(sound_file: str):
-    """Plays an alert sound using playsound, falling back to winsound."""
-    if sound_file and Path(sound_file).exists() and HAS_PLAYSOUND:
-        try:
-            logger.info(f"Playing alert sound from file: {sound_file}")
-            playsound.playsound(sound_file)
-            return
-        except Exception as e:
-            logger.warning(f"playsound failed to play sound file: {e}. Falling back to winsound.")
-    
-    # Winsound fallback
-    logger.info("Playing fallback system sound alert...")
+    """Plays a custom sound file if configured, otherwise plays a winsound beep."""
+    if sound_file and Path(sound_file).exists():
+        if HAS_PLAYSOUND:
+            try:
+                logger.info(f"Playing alert sound: {sound_file}")
+                playsound.playsound(sound_file)
+                return
+            except Exception as e:
+                logger.warning(f"playsound failed: {e}. Falling back to winsound.")
+        else:
+            # Try winsound.PlaySound for .wav files (no extra lib needed)
+            try:
+                winsound.PlaySound(sound_file, winsound.SND_FILENAME)
+                return
+            except Exception as e:
+                logger.warning(f"winsound.PlaySound failed: {e}. Using beep fallback.")
+    logger.info("Playing system beep alert...")
     for _ in range(3):
-        winsound.Beep(1000, 500)  # 1000Hz frequency, 500ms duration
+        winsound.Beep(1000, 500)
         time.sleep(0.1)
 
 def force_click(x: int, y: int, hold_duration: float = 0.12):
     """Positions the cursor at (x, y) via Win32 SetCursorPos and executes a hardware-level left click."""
     user32 = ctypes.windll.user32
     ix, iy = int(x), int(y)
-
     MOUSEEVENTF_LEFTDOWN = 0x0002
-    MOUSEEVENTF_LEFTUP = 0x0004
-
+    MOUSEEVENTF_LEFTUP   = 0x0004
     user32.SetCursorPos(ix, iy)
     time.sleep(0.02)
     user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
@@ -169,154 +217,69 @@ def force_click(x: int, y: int, hold_duration: float = 0.12):
     user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
     time.sleep(0.02)
 
-def focus_whatsapp_window() -> bool:
-    """Finds, maximizes, and activates the WhatsApp window. Returns True if successful."""
+
+# ---------------------------------------------------------------------------
+# WhatsApp Window Management
+# ---------------------------------------------------------------------------
+
+def focus_whatsapp_main_window() -> bool:
+    """Finds, maximizes, and activates the main WhatsApp chat window. Returns True if successful."""
     windows = gw.getWindowsWithTitle("WhatsApp")
     if not windows:
-        logger.warning("No window containing 'WhatsApp' in the title was found.")
+        logger.warning("No WhatsApp window found.")
         return False
-    
-    # Filter for the exact title to avoid matching browser tabs or scripts
+    # Prefer the landscape (main chat) window
     whatsapp_win = None
     for w in windows:
         if w.title == "WhatsApp":
-            whatsapp_win = w
-            break
-            
+            if w.width > w.height or w.width >= 1000:
+                whatsapp_win = w
+                break
+    if not whatsapp_win:
+        for w in windows:
+            if w.title == "WhatsApp":
+                whatsapp_win = w
+                break
     if not whatsapp_win:
         whatsapp_win = windows[0]
-        
     try:
-        # Restore if minimized
         if whatsapp_win.isMinimized:
             whatsapp_win.restore()
-        # Maximize to ensure coordinates are consistent
         whatsapp_win.maximize()
         whatsapp_win.activate()
         time.sleep(0.5)
-        logger.info(f"Focused and maximized WhatsApp window: '{whatsapp_win.title}'")
+        logger.info(f"Focused WhatsApp window: '{whatsapp_win.title}'")
         return True
     except Exception as e:
         logger.error(f"Failed to focus WhatsApp window: {e}")
         return False
 
-def wait_for_key_press(key_name="Enter", vk_code=0x0D):
-    """Waits globally for a key press (even when out of focus) using ctypes on Windows."""
-    import ctypes
-    # Clear any previous pressed state
-    while ctypes.windll.user32.GetAsyncKeyState(vk_code) & 0x8000:
-        time.sleep(0.05)
-    print(f"[Keyboard Hook] Waiting for you to press {key_name} on your keyboard...")
-    # Wait for key down
-    while not (ctypes.windll.user32.GetAsyncKeyState(vk_code) & 0x8000):
-        time.sleep(0.05)
-    # Wait for key up
-    while ctypes.windll.user32.GetAsyncKeyState(vk_code) & 0x8000:
-        time.sleep(0.05)
-    # A short sleep to prevent accidental bounce
-    time.sleep(0.1)
-
-def calibrate_coordinates():
-    """Interactive CLI to record coordinates for the two call buttons using global hotkeys."""
-    print("\n" + "="*50)
-    print("      WHATSAPP CALL BOT - CALIBRATION MODE      ")
-    print("="*50)
-    print("This mode records screen coordinates for clicks.")
-    print("Instructions: Hover your mouse cursor over the specified item,")
-    print("then press Enter on your keyboard (globally, no need to focus this window).\n")
-
-    config = load_config()
-
-    # Step 0: Focus Warmup Press (throwaway click/press)
-    print("0. Prep Step: Click on your WhatsApp window to bring it to focus.")
-    print("   Once WhatsApp is visible and focused, press Enter on your keyboard to start.")
-    wait_for_key_press("Enter", 0x0D)
-    print("Calibration sequence started!\n")
-
-    # Step 1: Call Button 1
-    print("1. Hover mouse over the first Call Button on WhatsApp.")
-    wait_for_key_press("Enter", 0x0D)
-    x, y = pyautogui.position()
-    config["call_button_1_coords"] = [x, y]
-    print(f"Captured Call Button 1 at: {x}, {y}\n")
-
-    # Step 2: Call Button 2 (Call again / confirmation)
-    print("2. Click that Call Button manually so the next Call screen/button becomes visible.")
-    print("   Hover mouse over the second Call button (Call again / Confirmation).")
-    wait_for_key_press("Enter", 0x0D)
-    x, y = pyautogui.position()
-    config["call_button_2_coords"] = [x, y]
-    print(f"Captured Call Button 2 at: {x}, {y}\n")
-
-    # Save
-    save_config(config)
-    print("Calibration completed successfully!")
-    print("You can verify the OCR text using the --test-ocr command.")
-    print("="*50 + "\n")
-
-def preprocess_image(img_np: np.ndarray) -> np.ndarray:
-    """Preprocesses a cropped screenshot to optimize OCR readability."""
-    # Convert PIL/RGB to Grayscale
-    gray = cv2.cvtColor(img_np, cv2.COLOR_BGR2GRAY)
-    
-    # Upscale 4x using Cubic Interpolation (makes small text larger and cleaner)
-    upscaled = cv2.resize(gray, (0, 0), fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
-    
-    # Binarization using Otsu's thresholding
-    _, thresh = cv2.threshold(upscaled, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
-    
-    # Ensure text is black and background is white
-    # Count black pixels vs white pixels. Usually background dominates.
-    # In standard OCR, white background (255) is optimal.
-    # If there are more black pixels (background is dark), we invert the image.
-    n_white = np.sum(thresh == 255)
-    n_black = np.sum(thresh == 0)
-    if n_white < n_black:
-        thresh = cv2.bitwise_not(thresh)
-        
-    return thresh
-
 def get_whatsapp_call_window():
-    """Finds the active WhatsApp call window based on title and orientation (portrait), and restores it if minimized/micro-minimized."""
+    """Finds the active WhatsApp call window (portrait orientation) and restores it if minimized."""
     try:
         windows = [w for w in gw.getWindowsWithTitle("WhatsApp") if w.title == "WhatsApp"]
         if not windows:
             return None
-            
-        # If there is only one "WhatsApp" window and it's landscape, it's the main chat window (no call active)
         if len(windows) == 1:
             w = windows[0]
             if w.width >= 1000 and w.width > w.height:
                 return None
-                
         for w in windows:
-            # The call window is portrait (height > width), main window is landscape (width > height)
-            # Minimize state window dimensions can be small/zero, so check coordinates too
             is_minimized = w.isMinimized or w.left < -10000 or w.top < -10000
-            
-            # If not minimized, we can check dimensions immediately
             if not is_minimized:
-                is_portrait = w.height > w.width
                 is_micro = w.width < 400 and w.height < 400
-                
-                # If it's a micro-minimized call window, restore it
                 if is_micro:
-                    logger.info("WhatsApp call window is micro-minimized. Restoring it to screen...")
+                    logger.info("WhatsApp call window is micro-minimized. Restoring...")
                     try:
                         w.restore()
                         w.activate()
                         time.sleep(1.0)
                     except Exception as err:
                         logger.error(f"Failed to restore micro-minimized window: {err}")
-                    is_portrait = w.height > w.width
-                
+                is_portrait = w.height > w.width
                 if is_portrait and 400 <= w.width <= 900 and 500 <= w.height <= 1000:
                     return w
             else:
-                # If minimized, to avoid restoring the main chat window by mistake:
-                # We check if this is likely the call window (the main chat window has a larger restored size,
-                # but if we are unsure, we restore and verify it is indeed portrait).
-                # Since the main window is typically large, we only restore if it's the secondary window or small.
                 logger.info("WhatsApp window is minimized. Verifying state...")
                 try:
                     w.restore()
@@ -330,36 +293,83 @@ def get_whatsapp_call_window():
         logger.error(f"Error searching for WhatsApp call window: {e}")
     return None
 
+
+# ---------------------------------------------------------------------------
+# Feature 2: Automated Contact Finder
+# Searches for a contact by name in WhatsApp and opens their chat.
+# ---------------------------------------------------------------------------
+
+def open_contact_chat(contact_name: str) -> bool:
+    """Searches for a contact by name in WhatsApp using the search bar and opens their chat.
+    Returns True if the contact was found and chat opened, False otherwise."""
+    if not contact_name or not contact_name.strip():
+        return True  # No contact specified — assume chat is already open
+
+    logger.info(f"Searching for contact: '{contact_name}'")
+
+    if not focus_whatsapp_main_window():
+        logger.error("Cannot search for contact: WhatsApp window not found.")
+        return False
+
+    time.sleep(0.5)
+
+    # Press Ctrl+F or Ctrl+K to open WhatsApp search
+    # WhatsApp Desktop uses Ctrl+F for global search
+    pyautogui.hotkey("ctrl", "f")
+    time.sleep(0.8)
+
+    # Clear any existing text and type the contact name
+    pyautogui.hotkey("ctrl", "a")
+    time.sleep(0.1)
+    pyautogui.typewrite(contact_name, interval=0.05)
+    time.sleep(1.5)  # Wait for search results to populate
+
+    # Press Enter to select the first/top result
+    pyautogui.press("enter")
+    time.sleep(0.8)
+
+    # Press Esc to close search overlay and land in the chat
+    pyautogui.press("escape")
+    time.sleep(0.5)
+
+    logger.info(f"Opened chat for contact: '{contact_name}'")
+    return True
+
+
+# ---------------------------------------------------------------------------
+# OCR Engine
+# ---------------------------------------------------------------------------
+
+def preprocess_image(img_np: np.ndarray) -> np.ndarray:
+    """Preprocesses a cropped screenshot to optimize OCR readability."""
+    gray = cv2.cvtColor(img_np, cv2.COLOR_BGR2GRAY)
+    upscaled = cv2.resize(gray, (0, 0), fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
+    _, thresh = cv2.threshold(upscaled, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    n_white = np.sum(thresh == 255)
+    n_black = np.sum(thresh == 0)
+    if n_white < n_black:
+        thresh = cv2.bitwise_not(thresh)
+    return thresh
+
 def perform_ocr(bbox: dict) -> str:
     """Screenshots the timer region, processes it, and extracts text via PyTesseract."""
     call_win = get_whatsapp_call_window()
     if call_win:
         try:
-            # Force focus to bring the call window to the foreground
             call_win.activate()
             time.sleep(0.2)
         except Exception:
             pass
-        # The call timer is centered horizontally and sits at roughly 61% down the call window height
         x = call_win.left + int((call_win.width - 120) / 2)
         y = call_win.top + int(call_win.height * 0.61)
         w = 120
         h = 40
     else:
         x, y, w, h = bbox["x"], bbox["y"], bbox["w"], bbox["h"]
-    
-    # Take screenshot of the region
+
     screenshot = pyautogui.screenshot(region=(x, y, w, h))
-    
-    # Convert screenshot to OpenCV format (numpy array)
     img_np = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
-    
-    # Preprocess
     processed = preprocess_image(img_np)
-    
-    # Run Tesseract with specific config:
-    # PSM 7: Treat the image as a single text line.
-    # Whitelist digits and colon.
     custom_config = r"--psm 7 -c tessedit_char_whitelist=0123456789:"
     try:
         text = pytesseract.image_to_string(processed, config=custom_config)
@@ -371,22 +381,84 @@ def perform_ocr(bbox: dict) -> str:
         logger.error(f"OCR Error: {e}")
         return ""
 
+
+# ---------------------------------------------------------------------------
+# Calibration & OCR dry-run
+# ---------------------------------------------------------------------------
+
+def wait_for_key_press(key_name="Enter", vk_code=0x0D):
+    """Waits globally for a key press using ctypes on Windows."""
+    while ctypes.windll.user32.GetAsyncKeyState(vk_code) & 0x8000:
+        time.sleep(0.05)
+    print(f"[Keyboard Hook] Waiting for you to press {key_name} on your keyboard...")
+    while not (ctypes.windll.user32.GetAsyncKeyState(vk_code) & 0x8000):
+        time.sleep(0.05)
+    while ctypes.windll.user32.GetAsyncKeyState(vk_code) & 0x8000:
+        time.sleep(0.05)
+    time.sleep(0.1)
+
+def calibrate_coordinates():
+    """Interactive CLI to record coordinates for call buttons using global hotkeys."""
+    print("\n" + "="*55)
+    print("       WHATSAPP CALL BOT - CALIBRATION MODE       ")
+    print("="*55)
+    print("This mode records screen coordinates for clicks.")
+    print("Hover your mouse over each item and press Enter.\n")
+    print("NOTE: Calibrate BOTH voice and video call buttons if you")
+    print("      plan to use call_type switching in config.\n")
+
+    config = load_config()
+
+    print("0. Click on WhatsApp to bring it into focus, then press Enter.")
+    wait_for_key_press("Enter", 0x0D)
+    print("Calibration started!\n")
+
+    # Voice Call Button 1
+    print("1. Hover mouse over the VOICE CALL button (phone icon, top-right).")
+    wait_for_key_press("Enter", 0x0D)
+    x, y = pyautogui.position()
+    config["call_button_1_coords"] = [x, y]
+    print(f"   Captured Voice Call Button 1 at: {x}, {y}\n")
+
+    # Voice Call Button 2
+    print("2. Click the voice call button manually to open the confirmation screen.")
+    print("   Hover mouse over the second/confirmation call button.")
+    wait_for_key_press("Enter", 0x0D)
+    x, y = pyautogui.position()
+    config["call_button_2_coords"] = [x, y]
+    print(f"   Captured Voice Call Button 2 at: {x}, {y}\n")
+
+    # Video Call Button 1
+    print("3. Press Esc or close the call, then hover over the VIDEO CALL button (camera icon).")
+    wait_for_key_press("Enter", 0x0D)
+    x, y = pyautogui.position()
+    config["video_call_button_1_coords"] = [x, y]
+    print(f"   Captured Video Call Button 1 at: {x}, {y}\n")
+
+    # Video Call Button 2
+    print("4. Click the video call button manually to open the confirmation screen.")
+    print("   Hover mouse over the second/confirmation video call button.")
+    wait_for_key_press("Enter", 0x0D)
+    x, y = pyautogui.position()
+    config["video_call_button_2_coords"] = [x, y]
+    print(f"   Captured Video Call Button 2 at: {x}, {y}\n")
+
+    save_config(config)
+    print("Calibration complete! Voice and video call coordinates saved.")
+    print("You can verify OCR using: python whatsapp_call_bot.py --test-ocr")
+    print("="*55 + "\n")
+
 def test_ocr_dryrun():
     """Captures the bounding box region, saves debug images, and prints the OCR result."""
     config = load_config()
-    
     print("\n" + "="*50)
     print("      WHATSAPP CALL BOT - OCR TESTING MODE      ")
     print("="*50)
-    print("Please make sure WhatsApp has an active call displaying the timer on screen.")
-    
-    # Automatic countdown to give user time to focus the WhatsApp call window
+    print("Make sure WhatsApp has an active call displaying the timer.")
     for i in range(10, 0, -1):
         print(f"Taking screenshot in {i} seconds... (Switch to WhatsApp call window now!)")
         time.sleep(1.0)
     print("Capturing now...")
-
-
 
     call_win = get_whatsapp_call_window()
     if call_win:
@@ -399,201 +471,236 @@ def test_ocr_dryrun():
         bbox = config["timer_bbox"]
         x, y, w, h = bbox["x"], bbox["y"], bbox["w"], bbox["h"]
         print("Using configuration file coordinates (Call window not found).")
-    
-    print(f"Screenshotting region: X={x}, Y={y}, W={w}, H={h}")
 
-    # Capture
+    print(f"Screenshotting region: X={x}, Y={y}, W={w}, H={h}")
     screenshot = pyautogui.screenshot(region=(x, y, w, h))
     img_np = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
     processed = preprocess_image(img_np)
-    
-    # Save debug files locally
+
     debug_raw_path = "debug_ocr_raw.png"
     debug_proc_path = "debug_ocr_processed.png"
     cv2.imwrite(debug_raw_path, img_np)
     cv2.imwrite(debug_proc_path, processed)
-    
     print(f"\nRaw screenshot saved to: {Path(debug_raw_path).resolve()}")
     print(f"Preprocessed image saved to: {Path(debug_proc_path).resolve()}")
-    
-    # Run Tesseract
+
     custom_config = r"--psm 7 -c tessedit_char_whitelist=0123456789:"
     try:
         raw_text = pytesseract.image_to_string(processed, config=custom_config).strip()
         print(f"\nOCR Output (Whitelist): '{raw_text}'")
-        
-        # Test without whitelist for comparison
         raw_text_no_whitelist = pytesseract.image_to_string(processed, config="--psm 7").strip()
         print(f"OCR Output (Unrestricted): '{raw_text_no_whitelist}'")
-        
-        # Regex Match Check
         timer_pattern = re.compile(r"^0[0-5]:\d{2}$")
         is_match = bool(timer_pattern.match(raw_text))
         print(f"Regex Pattern Match (0[0-5]:\\d{{2}}): {is_match}")
-        
     except pytesseract.TesseractNotFoundError:
         print("\nERROR: Tesseract OCR executable was not found.")
         print(f"Current setting: {config['tesseract_cmd']}")
-        print("Please check your installation and ensure it matches the path in whatsapp_config.json")
     except Exception as e:
         print(f"\nError running OCR: {e}")
     print("="*50 + "\n")
 
+
+# ---------------------------------------------------------------------------
+# Main Automation Loop
+# ---------------------------------------------------------------------------
+
 def run_automation():
     """Main execution loop to dial and monitor calls."""
-    config = load_config()
-    
-    # Validate coordinate configs
-    # We do a basic validation check. If all values are placeholders, warn the user.
-    if config["call_button_1_coords"] == DEFAULT_CONFIG["call_button_1_coords"]:
-        logger.warning("Coordinates are at default values. You likely need to run: python whatsapp_call_bot.py --calibrate")
+    # Start the global Esc emergency stop listener
+    start_esc_listener()
+    logger.info("Press Esc at any time to stop the bot safely.")
 
-    max_retries = config.get("max_retries", 10)
-    timeout_seconds = config.get("timeout_seconds", 20)
-    cooldown_min = config.get("cooldown_min_seconds", 2.0)
-    cooldown_max = config.get("cooldown_max_seconds", 5.0)
-    
-    # Match standard timer formats like 00:01 or 0:01
+    config = load_config()
+
+    if config["call_button_1_coords"] == DEFAULT_CONFIG["call_button_1_coords"]:
+        logger.warning("Coordinates are at default values. Run: python whatsapp_call_bot.py --calibrate")
+
+    max_retries    = config.get("max_retries", 10)
+    timeout_seconds = config.get("timeout_seconds", 7)
+    cooldown_min   = config.get("cooldown_min_seconds", 2.0)
+    cooldown_max   = config.get("cooldown_max_seconds", 5.0)
+    sound_file     = config.get("sound_file", "")
+    call_type      = config.get("call_type", "voice").lower().strip()
+    contact_name   = config.get("contact_name", "").strip()
+
+    # Feature 3: Call Type Toggle — pick the right button coords
+    if call_type == "video":
+        btn1_coords = config.get("video_call_button_1_coords", config["call_button_1_coords"])
+        btn2_coords = config.get("video_call_button_2_coords", config["call_button_2_coords"])
+        logger.info("Call type: VIDEO")
+    else:
+        btn1_coords = config["call_button_1_coords"]
+        btn2_coords = config["call_button_2_coords"]
+        logger.info("Call type: VOICE")
+
     timer_pattern = re.compile(r"\d{1,2}:\d{2}")
-    
+
     logger.info("Starting WhatsApp Call Automation Bot.")
-    logger.info(f"Parameters: max_retries={max_retries}, call_timeout={timeout_seconds}s, cooldown range={cooldown_min}-{cooldown_max}s")
+    logger.info(f"Parameters: max_retries={max_retries}, call_timeout={timeout_seconds}s, cooldown={cooldown_min}-{cooldown_max}s")
+
+    # Feature 2: Automated Contact Finder — open the target chat before starting
+    if contact_name:
+        logger.info(f"Contact specified: '{contact_name}'. Opening their chat now...")
+        if not open_contact_chat(contact_name):
+            logger.error("Failed to open contact chat. Exiting.")
+            sys.exit(1)
+        logger.info("Chat opened. Starting call loop...")
+        time.sleep(1.0)
+    else:
+        logger.info("No contact_name set in config. Assuming chat is already open.")
 
     for attempt in range(1, max_retries + 1):
+        # Feature 1: Check Esc stop at the top of every loop iteration
+        check_stop()
+
         logger.info(f"--- CALL ATTEMPT {attempt} / {max_retries} ---")
-        
-        # 1. Focus the WhatsApp window
-        if not focus_whatsapp_window():
+
+        # Focus the main WhatsApp window
+        if not focus_whatsapp_main_window():
             logger.warning("Could not focus WhatsApp. Clicking coordinates blindly...")
-        
-        # 2. Forcefully take mouse controls and click Call Buttons
-        focus_whatsapp_window()
-        
-        call_1_x, call_1_y = config["call_button_1_coords"]
+
+        focus_whatsapp_main_window()
+
+        # Click the call button(s)
+        call_1_x, call_1_y = btn1_coords
         logger.info(f"Clicking Call Button 1 at: {call_1_x}, {call_1_y}")
         force_click(call_1_x, call_1_y, hold_duration=0.12)
         time.sleep(0.8)
-        
-        call_2_x, call_2_y = config["call_button_2_coords"]
+
+        check_stop()
+
+        call_2_x, call_2_y = btn2_coords
         logger.info(f"Clicking Call Button 2 at: {call_2_x}, {call_2_y}")
         force_click(call_2_x, call_2_y, hold_duration=0.12)
-            
-        # Wait up to 3 seconds for WhatsApp call window animation to complete
+
+        # Wait up to 3 seconds for the call window to appear
         logger.info("Waiting for WhatsApp call window to initialize...")
         start_wait = time.time()
         while time.time() - start_wait < 3.0:
+            check_stop()
             if get_whatsapp_call_window() is not None:
                 break
             time.sleep(0.3)
 
-        # 3. Monitor for timer
-        logger.info(f"Monitoring call timer region for {timeout_seconds} seconds...")
+        # Monitor for connected call timer
+        logger.info(f"Monitoring call timer for {timeout_seconds} seconds...")
         call_answered = False
         start_time = time.time()
-
-            
-        # Track if the call window has appeared during this attempt
         window_appeared = False
+
         if get_whatsapp_call_window() is not None:
             window_appeared = True
             logger.info("WhatsApp Call window detected.")
-            
+
         while time.time() - start_time < timeout_seconds:
+            check_stop()
             call_win = get_whatsapp_call_window()
-            
-            # If the window appeared and is now gone, the user or recipient hung up
+
             if window_appeared and call_win is None:
-                logger.info("Call window was closed. Stopping attempt and exiting.")
+                logger.info("Call window closed. Bot stopping.")
                 sys.exit(0)
-            
+
             if call_win is not None:
                 window_appeared = True
-                
+
             ocr_text = perform_ocr(config["timer_bbox"])
-            
-            # Search for timer pattern
             match = timer_pattern.search(ocr_text)
             if match:
                 detected_timer = match.group(0)
-                logger.info(f"Success! Detected call timer: '{detected_timer}' (OCR text was '{ocr_text}')")
+                logger.info(f"Call answered! Timer detected: '{detected_timer}'")
                 call_answered = True
                 break
-                
-            time.sleep(1.0)  # Scan every 1 second
-            
+
+            time.sleep(1.0)
+
         if call_answered:
             logger.info("Call was successfully answered!")
-            play_alert_sound(config["sound_file"])
-            
-            # Keep monitoring the active call until it ends, then close the window
-            logger.info("Monitoring active call... Will automatically close the window when the call ends.")
+            # Feature 1 still active: allow Esc to stop even while call is active
+            play_alert_sound(sound_file)
+
+            logger.info("Monitoring active call... Will exit when the call ends.")
             no_timer_count = 0
             while True:
+                check_stop()
                 time.sleep(2.0)
                 active_win = get_whatsapp_call_window()
-                
                 ocr_text = perform_ocr(config["timer_bbox"])
                 if timer_pattern.search(ocr_text):
-                    no_timer_count = 0  # Call is active
+                    no_timer_count = 0
                 else:
                     no_timer_count += 1
-                    # If no timer is seen for 4 checks (8 seconds), the call has ended
                     if no_timer_count >= 4:
-                        logger.info("No active call timer detected for 8 seconds. Call has ended. Closing window...")
+                        logger.info("Call ended (no timer for 8s). Closing call window...")
                         if active_win:
                             try:
                                 active_win.close()
                             except Exception as e:
                                 logger.error(f"Failed to close call window: {e}")
                         else:
-                            logger.info("Call window handle not found. Exiting script.")
+                            logger.info("Call window already gone. Exiting.")
                         sys.exit(0)
             sys.exit(0)
-            
-        logger.warning(f"Call was not answered within {timeout_seconds} seconds. Hanging up...")
+
+        # Call was not answered — hang up and retry
+        logger.warning(f"Call not answered within {timeout_seconds}s. Hanging up...")
         call_win = get_whatsapp_call_window()
         if call_win:
-            # Dynamically calculate the center of the hang-up button relative to window size
             end_x = call_win.left + int(call_win.width * 0.5)
             end_y = call_win.top + int(call_win.height * 0.88)
-            logger.info(f"Clicking dynamic End Call button at: {end_x}, {end_y} (Window size: {call_win.width}x{call_win.height})")
+            logger.info(f"Clicking End Call button at: {end_x}, {end_y}")
             force_click(end_x, end_y, hold_duration=0.1)
             time.sleep(1.0)
-            # Try to close the window as well since call was unanswered
             try:
                 call_win.close()
             except Exception:
                 pass
         else:
             end_x, end_y = config["end_call_coords"]
-            logger.info(f"Clicking configured End Call button at: {end_x}, {end_y}")
+            logger.info(f"Clicking configured End Call at: {end_x}, {end_y}")
             force_click(end_x, end_y, hold_duration=0.1)
-        
-        # Cooldown interval (randomized to prevent spam detection/rate limiting)
+
+        check_stop()
         cooldown = random.uniform(cooldown_min, cooldown_max)
-        logger.info(f"Waiting for randomized cooldown of {cooldown:.2f} seconds before retrying...")
+        logger.info(f"Cooldown: {cooldown:.2f}s before next attempt...")
         time.sleep(cooldown)
-        
-    logger.error(f"Failed to connect call after reaching maximum retry limit ({max_retries}). Exiting.")
+
+    logger.error(f"Reached max retry limit ({max_retries}) without answer. Exiting.")
     sys.exit(1)
 
+
+# ---------------------------------------------------------------------------
+# Entry Point
+# ---------------------------------------------------------------------------
+
 def main():
-    parser = argparse.ArgumentParser(description="WhatsApp Desktop Screen Call Automation & OCR Bot")
+    parser = argparse.ArgumentParser(
+        description="WhatsApp Desktop Call Automation Bot",
+        formatter_class=argparse.RawTextHelpFormatter,
+        epilog=(
+            "Config options (set in whatsapp_config.json):\n"
+            "  contact_name       : Name of the contact to search and call (leave empty to use open chat)\n"
+            "  call_type          : 'voice' or 'video' (default: voice)\n"
+            "  sound_file         : Path to a .wav file to play when call is answered\n"
+            "  timeout_seconds    : Seconds to wait before treating a call as unanswered (default: 7)\n"
+            "  max_retries        : Maximum number of call attempts (default: 10)\n"
+            "  cooldown_min/max   : Random cooldown range (seconds) between retries\n"
+        )
+    )
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--calibrate", action="store_true", help="Interactively record screen coordinates")
-    group.add_argument("--test-ocr", action="store_true", help="Perform a dry-run screenshot and OCR extraction")
-    group.add_argument("--run", action="store_true", help="Run the call automation loop")
-    
+    group.add_argument("--calibrate", action="store_true", help="Interactively record screen coordinates for voice and video call buttons")
+    group.add_argument("--test-ocr",  action="store_true", help="Perform a dry-run screenshot and OCR extraction of the call timer")
+    group.add_argument("--run",       action="store_true", help="Run the call automation loop")
+
     args = parser.parse_args()
-    
+
     if args.calibrate:
         calibrate_coordinates()
-    elif args.test_ocr:  # argparse maps --test-ocr to args.test_ocr
+    elif args.test_ocr:
         test_ocr_dryrun()
     elif args.run:
         run_automation()
 
 if __name__ == "__main__":
-    # Disable PyAutoGUI failsafe entirely so user mouse movements to corners don't crash the script
     pyautogui.FAILSAFE = False
     main()
