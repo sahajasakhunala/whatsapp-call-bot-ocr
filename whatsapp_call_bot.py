@@ -321,6 +321,10 @@ def open_contact_chat(contact_name: str) -> bool:
     pyautogui.typewrite(contact_name, interval=0.05)
     time.sleep(1.5)  # Wait for search results to populate
 
+    # Navigate down to the first search result
+    pyautogui.press("down")
+    time.sleep(0.2)
+
     # Press Enter to select the first/top result
     pyautogui.press("enter")
     time.sleep(0.8)
