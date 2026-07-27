@@ -41,7 +41,6 @@ class CallResult(Enum):
     ANSWERED = auto()
     NO_ANSWER = auto()
     DECLINED_OR_UNAVAILABLE = auto()
-    USER_CANCELLED = auto()
     WINDOW_FAILED = auto()
 
 
@@ -299,6 +298,52 @@ def get_whatsapp_call_window():
 # Automated Contact Finder
 # ---------------------------------------------------------------------------
 
+def verify_chat_opened(whatsapp_win, contact_name: str) -> bool:
+    """Verifies if the correct chat pane has been opened by scanning the chat header via OCR."""
+    # Bounding box of the chat header relative to window bounds
+    x = whatsapp_win.left + 420
+    y = whatsapp_win.top + 40
+    w = 350
+    h = 60
+
+    try:
+        screenshot = pyautogui.screenshot(region=(x, y, w, h))
+        img_np = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+        
+        # Preprocess to isolate dark text on a white background
+        gray = cv2.cvtColor(img_np, cv2.COLOR_BGR2GRAY)
+        upscaled = cv2.resize(gray, (0, 0), fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+        _, thresh = cv2.threshold(upscaled, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+        
+        # Dynamic inversion for light/dark themes
+        n_white = np.sum(thresh == 255)
+        n_black = np.sum(thresh == 0)
+        if n_white < n_black:
+            thresh = cv2.bitwise_not(thresh)
+            
+        # Use OCR with default English config for text detection
+        ocr_text = pytesseract.image_to_string(thresh, config="--psm 7").strip().lower()
+        logger.info(f"Chat header OCR result: '{ocr_text}'")
+        
+        # Clean text
+        clean_text = re.sub(r'[^a-z0-9 ]', '', ocr_text)
+        clean_contact = re.sub(r'[^a-z0-9 ]', '', contact_name.lower())
+        
+        # Extract matching parts
+        parts = [p for p in clean_contact.split() if len(p) >= 2]
+        if not parts:
+            parts = [clean_contact]
+            
+        # Verify contact name is in header text
+        if any(part in clean_text for part in parts):
+            return True
+            
+        logger.warning(f"Chat header verification failed. Header read: '{clean_text}', Expected: '{clean_contact}'")
+    except Exception as e:
+        logger.error(f"Failed to verify chat opened: {e}")
+        
+    return False
+
 def open_contact_chat(contact_name: str) -> bool:
     """Searches for a contact by name in WhatsApp using the search bar and opens their chat."""
     if not contact_name or not contact_name.strip():
@@ -339,9 +384,14 @@ def open_contact_chat(contact_name: str) -> bool:
     logger.info(f"Clicking first search result in sidebar at: {click_x}, {click_y}")
     
     force_click(click_x, click_y, hold_duration=0.1)
-    time.sleep(1.0)
+    time.sleep(1.2) # Allow chat pane to load fully
 
-    logger.info(f"Opened chat for contact: '{contact_name}'")
+    # Verify if the chat opened successfully
+    if not verify_chat_opened(whatsapp_win, contact_name):
+        logger.error("Chat verification failed. Opened window does not match the target contact.")
+        return False
+
+    logger.info(f"Successfully opened and verified chat for contact: '{contact_name}'")
     return True
 
 
@@ -609,30 +659,39 @@ def monitor_active_call(sound_file: str, timer_bbox: dict):
 
     timer_pattern = re.compile(r"\d{1,2}:\d{2}")
     no_timer_count = 0
+    no_window_count = 0
 
     while True:
         check_stop()
         interruptible_sleep(2.0)
         
         active_win = get_whatsapp_call_window()
+        
+        # Count consecutive checks where window was not found
+        if active_win is None:
+            no_window_count += 1
+        else:
+            no_window_count = 0
+            
         ocr_text = perform_ocr(timer_bbox)
-
         if timer_pattern.search(ocr_text):
             no_timer_count = 0  # Call is active
         else:
             no_timer_count += 1
-            # Dual-Signal Termination: OCR missing for 8s AND window handle closed
-            call_ended = (no_timer_count >= 4) or (active_win is None)
-            if call_ended:
-                logger.info("Active call has ended. Closing call window...")
-                if active_win:
-                    try:
-                        active_win.close()
-                    except Exception as e:
-                        logger.error(f"Failed to close call window: {e}")
-                else:
-                    logger.info("Call window already closed.")
-                sys.exit(0)
+            
+        # Call ended if window is missing consecutively for 3 checks (6s)
+        # OR if OCR fails to see a timer for 15 checks (30s) as a safety net
+        call_ended = (no_window_count >= 3) or (no_timer_count >= 15)
+        if call_ended:
+            logger.info("Active call has ended (window closed or inactive).")
+            if active_win:
+                try:
+                    active_win.close()
+                except Exception as e:
+                    logger.error(f"Failed to close call window: {e}")
+            else:
+                logger.info("Call window already closed.")
+            sys.exit(0)
 
 
 # ---------------------------------------------------------------------------
@@ -705,11 +764,7 @@ def run_automation():
             end_call_coords=config["end_call_coords"]
         )
 
-        if result == CallResult.USER_CANCELLED:
-            logger.info("Bot stopped by user (Esc key). Exiting.")
-            sys.exit(0)
-
-        elif result == CallResult.ANSWERED:
+        if result == CallResult.ANSWERED:
             logger.info("Call was successfully answered!")
             monitor_active_call(sound_file, config["timer_bbox"])
             sys.exit(0)
