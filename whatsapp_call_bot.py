@@ -321,15 +321,29 @@ def open_contact_chat(contact_name: str) -> bool:
     pyautogui.typewrite(contact_name, interval=0.05)
     time.sleep(1.5)  # Wait for search results to populate
 
-    # Navigate down to the first search result
-    pyautogui.press("down")
-    time.sleep(0.2)
+    # Get main WhatsApp window coordinates to click the first result in the sidebar
+    windows = gw.getWindowsWithTitle("WhatsApp")
+    whatsapp_win = None
+    for w in windows:
+        if w.title == "WhatsApp" and (w.width > w.height or w.width >= 1000):
+            whatsapp_win = w
+            break
+    if not whatsapp_win and windows:
+        whatsapp_win = windows[0]
 
-    # Press Enter to select the first/top result
-    pyautogui.press("enter")
-    time.sleep(0.8)
+    if not whatsapp_win:
+        logger.error("Could not find WhatsApp window to click first search result.")
+        return False
 
-    # Press Esc to close search overlay and land in the chat
+    # Click the first item in the sidebar list (x=230, y=270 relative to window top-left)
+    click_x = whatsapp_win.left + 230
+    click_y = whatsapp_win.top + 270
+    logger.info(f"Clicking first search result in sidebar at: {click_x}, {click_y}")
+    
+    force_click(click_x, click_y, hold_duration=0.1)
+    time.sleep(1.0)
+
+    # Press Esc to clear search overlay and return to normal chat focus
     pyautogui.press("escape")
     time.sleep(0.5)
 
