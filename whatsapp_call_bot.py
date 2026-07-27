@@ -11,6 +11,7 @@ import ctypes
 import ctypes.wintypes
 import threading
 from pathlib import Path
+from enum import Enum, auto
 
 # Configure logging
 logging.basicConfig(
@@ -29,16 +30,20 @@ try:
     import pygetwindow as gw
 except ImportError as e:
     logger.error(f"Missing required library: {e}")
-    logger.error("Please install dependencies: pip install pyautogui opencv-python pytesseract numpy pygetwindow playsound==1.2.2")
+    logger.error("Please install dependencies: pip install -r requirements.txt")
     sys.exit(1)
 
-# playsound has a history of platform issues; import defensively
-HAS_PLAYSOUND = False
-try:
-    import playsound
-    HAS_PLAYSOUND = True
-except ImportError:
-    logger.warning("playsound library is not installed or failed to import. Falling back to winsound.")
+
+# ---------------------------------------------------------------------------
+# Call Result State Machine Enum
+# ---------------------------------------------------------------------------
+class CallResult(Enum):
+    ANSWERED = auto()
+    NO_ANSWER = auto()
+    DECLINED_OR_UNAVAILABLE = auto()
+    USER_CANCELLED = auto()
+    WINDOW_FAILED = auto()
+
 
 # ---------------------------------------------------------------------------
 # Global stop flag - set to True when user presses Esc anywhere
@@ -46,7 +51,7 @@ except ImportError:
 _stop_requested = False
 
 # ---------------------------------------------------------------------------
-# Default configuration parameters
+# Configuration parameters
 # ---------------------------------------------------------------------------
 CONFIG_FILE = Path("whatsapp_config.json")
 DEFAULT_TESSERACT_PATHS = [
@@ -68,7 +73,7 @@ DEFAULT_CONFIG = {
         "w": 80,
         "h": 30
     },
-    "timeout_seconds": 7,
+    "timeout_seconds": 25,
     "max_retries": 10,
     "cooldown_min_seconds": 2.0,
     "cooldown_max_seconds": 5.0,
@@ -92,7 +97,6 @@ class RECT(ctypes.Structure):
 
 # ---------------------------------------------------------------------------
 # Global Esc Hotkey Listener
-# Runs on a background daemon thread. Sets _stop_requested = True on Esc press.
 # ---------------------------------------------------------------------------
 VK_ESCAPE = 0x1B
 
@@ -100,13 +104,12 @@ def _esc_listener_loop():
     """Background thread: polls GetAsyncKeyState for Esc press. No focus required."""
     global _stop_requested
     user32 = ctypes.windll.user32
-    # Wait for any previous Esc key press to clear
     while user32.GetAsyncKeyState(VK_ESCAPE) & 0x8000:
         time.sleep(0.05)
     while True:
         if user32.GetAsyncKeyState(VK_ESCAPE) & 0x8000:
             _stop_requested = True
-            logger.warning("Esc pressed. Stopping bot after current operation...")
+            logger.warning("Esc pressed. Stopping bot cleanly...")
             return
         time.sleep(0.05)
 
@@ -163,7 +166,6 @@ def load_config() -> dict:
     else:
         logger.info("Configuration file not found. Using default profile.")
 
-    # Inject any missing default keys without overwriting existing ones
     for k, v in DEFAULT_CONFIG.items():
         if k not in config:
             config[k] = v
@@ -190,22 +192,15 @@ def save_config(config: dict):
         logger.error(f"Failed to save configuration: {e}")
 
 def play_alert_sound(sound_file: str):
-    """Plays a custom sound file if configured, otherwise plays a winsound beep."""
+    """Plays a custom sound file if configured, otherwise plays a native winsound beep."""
     if sound_file and Path(sound_file).exists():
-        if HAS_PLAYSOUND:
-            try:
-                logger.info(f"Playing alert sound: {sound_file}")
-                playsound.playsound(sound_file)
-                return
-            except Exception as e:
-                logger.warning(f"playsound failed: {e}. Falling back to winsound.")
-        else:
-            # Try winsound.PlaySound for .wav files (no extra lib needed)
-            try:
-                winsound.PlaySound(sound_file, winsound.SND_FILENAME)
-                return
-            except Exception as e:
-                logger.warning(f"winsound.PlaySound failed: {e}. Using beep fallback.")
+        try:
+            logger.info(f"Playing alert sound: {sound_file}")
+            winsound.PlaySound(sound_file, winsound.SND_FILENAME)
+            return
+        except Exception as e:
+            logger.warning(f"winsound.PlaySound failed: {e}. Using beep fallback.")
+    
     logger.info("Playing system beep alert...")
     for _ in range(3):
         winsound.Beep(1000, 500)
@@ -214,7 +209,6 @@ def play_alert_sound(sound_file: str):
 def force_click(x: int, y: int, hold_duration: float = 0.12):
     """Positions the cursor at (x, y), waits briefly for UI hover state to register, and executes a click."""
     pyautogui.moveTo(x, y)
-    # Crucial: Wait a moment for Electron/Web UI to register the hover state before clicking
     time.sleep(0.15)
     pyautogui.mouseDown()
     time.sleep(hold_duration)
@@ -232,7 +226,7 @@ def focus_whatsapp_main_window() -> bool:
     if not windows:
         logger.warning("No WhatsApp window found.")
         return False
-    # Prefer the landscape (main chat) window
+    
     whatsapp_win = None
     for w in windows:
         if w.title == "WhatsApp":
@@ -246,6 +240,7 @@ def focus_whatsapp_main_window() -> bool:
                 break
     if not whatsapp_win:
         whatsapp_win = windows[0]
+        
     try:
         if whatsapp_win.isMinimized:
             whatsapp_win.restore()
@@ -259,7 +254,7 @@ def focus_whatsapp_main_window() -> bool:
         return False
 
 def get_whatsapp_call_window():
-    """Finds the active WhatsApp call window (portrait orientation) and restores it if minimized."""
+    """Finds active WhatsApp call window by orientation (height > width) and restores it if minimized."""
     try:
         windows = [w for w in gw.getWindowsWithTitle("WhatsApp") if w.title == "WhatsApp"]
         if not windows:
@@ -271,6 +266,7 @@ def get_whatsapp_call_window():
         for w in windows:
             is_minimized = w.isMinimized or w.left < -10000 or w.top < -10000
             if not is_minimized:
+                is_portrait = w.height > w.width
                 is_micro = w.width < 400 and w.height < 400
                 if is_micro:
                     logger.info("WhatsApp call window is micro-minimized. Restoring...")
@@ -280,8 +276,9 @@ def get_whatsapp_call_window():
                         time.sleep(1.0)
                     except Exception as err:
                         logger.error(f"Failed to restore micro-minimized window: {err}")
-                is_portrait = w.height > w.width
-                if is_portrait and 400 <= w.width <= 900 and 500 <= w.height <= 1000:
+                    is_portrait = w.height > w.width
+                # Relaxed bounds: orientation check plus minimum viable dimensions
+                if is_portrait and w.width >= 200 and w.height >= 300:
                     return w
             else:
                 logger.info("WhatsApp window is minimized. Verifying state...")
@@ -289,7 +286,7 @@ def get_whatsapp_call_window():
                     w.restore()
                     w.activate()
                     time.sleep(1.0)
-                    if w.height > w.width and 400 <= w.width <= 900 and 500 <= w.height <= 1000:
+                    if w.height > w.width and w.width >= 200 and w.height >= 300:
                         return w
                 except Exception as restore_err:
                     logger.error(f"Failed to check minimized window: {restore_err}")
@@ -299,15 +296,13 @@ def get_whatsapp_call_window():
 
 
 # ---------------------------------------------------------------------------
-# Feature 2: Automated Contact Finder
-# Searches for a contact by name in WhatsApp and opens their chat.
+# Automated Contact Finder
 # ---------------------------------------------------------------------------
 
 def open_contact_chat(contact_name: str) -> bool:
-    """Searches for a contact by name in WhatsApp using the search bar and opens their chat.
-    Returns True if the contact was found and chat opened, False otherwise."""
+    """Searches for a contact by name in WhatsApp using the search bar and opens their chat."""
     if not contact_name or not contact_name.strip():
-        return True  # No contact specified - assume chat is already open
+        return True
 
     logger.info(f"Searching for contact: '{contact_name}'")
 
@@ -317,18 +312,14 @@ def open_contact_chat(contact_name: str) -> bool:
 
     time.sleep(0.5)
 
-    # Press Ctrl+F or Ctrl+K to open WhatsApp search
-    # WhatsApp Desktop uses Ctrl+F for global search
     pyautogui.hotkey("ctrl", "f")
     time.sleep(0.8)
 
-    # Clear any existing text and type the contact name
     pyautogui.hotkey("ctrl", "a")
     time.sleep(0.1)
     pyautogui.typewrite(contact_name, interval=0.05)
-    time.sleep(1.5)  # Wait for search results to populate
+    time.sleep(1.5)
 
-    # Get main WhatsApp window coordinates to click the first result in the sidebar
     windows = gw.getWindowsWithTitle("WhatsApp")
     whatsapp_win = None
     for w in windows:
@@ -343,7 +334,6 @@ def open_contact_chat(contact_name: str) -> bool:
         return False
 
     # Click the first item in the sidebar list (x=230, y=330 relative to window top-left)
-    # y=330 lands in the middle of the first result, bypassing the "Chats" label header at y=260
     click_x = whatsapp_win.left + 230
     click_y = whatsapp_win.top + 330
     logger.info(f"Clicking first search result in sidebar at: {click_x}, {click_y}")
@@ -356,7 +346,7 @@ def open_contact_chat(contact_name: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# OCR Engine
+# OCR Engine (Non-intrusive, no focus stealing)
 # ---------------------------------------------------------------------------
 
 def preprocess_image(img_np: np.ndarray) -> np.ndarray:
@@ -371,14 +361,9 @@ def preprocess_image(img_np: np.ndarray) -> np.ndarray:
     return thresh
 
 def perform_ocr(bbox: dict) -> str:
-    """Screenshots the timer region, processes it, and extracts text via PyTesseract."""
+    """Screenshots the timer region silently and extracts text via PyTesseract without stealing focus."""
     call_win = get_whatsapp_call_window()
     if call_win:
-        try:
-            call_win.activate()
-            time.sleep(0.2)
-        except Exception:
-            pass
         x = call_win.left + int((call_win.width - 120) / 2)
         y = call_win.top + int(call_win.height * 0.61)
         w = 120
@@ -402,7 +387,7 @@ def perform_ocr(bbox: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Calibration & OCR dry-run
+# Calibration & Dry-run
 # ---------------------------------------------------------------------------
 
 def wait_for_key_press(key_name="Enter", vk_code=0x0D):
@@ -437,7 +422,6 @@ def calibrate_coordinates():
     print("Calibration started!\n")
     step_num += 1
 
-    # Voice Call Button 1
     print(f"{step_num}. Hover mouse over the VOICE CALL button (phone icon, top-right).")
     wait_for_key_press("Enter", 0x0D)
     x, y = pyautogui.position()
@@ -446,7 +430,6 @@ def calibrate_coordinates():
     step_num += 1
 
     if needs_confirm:
-        # Voice Call Button 2
         print(f"{step_num}. Click the voice call button manually to open the confirmation screen.")
         print("   Hover mouse over the second/confirmation call button.")
         wait_for_key_press("Enter", 0x0D)
@@ -457,7 +440,6 @@ def calibrate_coordinates():
     else:
         config["call_button_2_coords"] = None
 
-    # Video Call Button 1
     print(f"{step_num}. Hover over the VIDEO CALL button (camera icon, top-right).")
     wait_for_key_press("Enter", 0x0D)
     x, y = pyautogui.position()
@@ -466,7 +448,6 @@ def calibrate_coordinates():
     step_num += 1
 
     if needs_confirm:
-        # Video Call Button 2
         print(f"{step_num}. Click the video call button manually to open the confirmation screen.")
         print("   Hover mouse over the second/confirmation video call button.")
         wait_for_key_press("Enter", 0x0D)
@@ -536,12 +517,130 @@ def test_ocr_dryrun():
 
 
 # ---------------------------------------------------------------------------
+# Dialing & Attempt State Handler
+# ---------------------------------------------------------------------------
+
+def dial_and_monitor_attempt(btn1_coords: list, btn2_coords: list, ring_timeout: float, timer_bbox: dict, end_call_coords: list) -> CallResult:
+    """Executes a single dialing attempt and monitors call state. Returns a CallResult enum."""
+    check_stop()
+
+    # Safety: Focus WhatsApp main window once. Never click blindly if focus fails.
+    if not focus_whatsapp_main_window():
+        logger.error("Could not focus WhatsApp main window. Aborting click attempt safely.")
+        return CallResult.WINDOW_FAILED
+
+    # Click the call button(s)
+    call_1_x, call_1_y = btn1_coords
+    logger.info(f"Clicking Call Button 1 at: {call_1_x}, {call_1_y}")
+    force_click(call_1_x, call_1_y, hold_duration=0.12)
+
+    if btn2_coords:
+        time.sleep(0.8)
+        check_stop()
+        call_2_x, call_2_y = btn2_coords
+        logger.info(f"Clicking Call Button 2 at: {call_2_x}, {call_2_y}")
+        force_click(call_2_x, call_2_y, hold_duration=0.12)
+
+    # Separate UI initialization timeout (5.0s) from ring timeout
+    logger.info("Waiting for WhatsApp call window to initialize...")
+    start_wait = time.time()
+    call_win_detected = False
+    while time.time() - start_wait < 5.0:
+        check_stop()
+        if get_whatsapp_call_window() is not None:
+            call_win_detected = True
+            logger.info("WhatsApp Call window detected.")
+            break
+        interruptible_sleep(0.3)
+
+    # Monitor dialing / ringing status for ring_timeout seconds
+    logger.info(f"Monitoring call timer for {ring_timeout} seconds...")
+    timer_pattern = re.compile(r"\d{1,2}:\d{2}")
+    start_time = time.time()
+
+    while time.time() - start_time < ring_timeout:
+        check_stop()
+        call_win = get_whatsapp_call_window()
+
+        # Outcome 4: Unavailable / Busy / Declined
+        # If call popup appeared and then closed rapidly before timer started
+        if call_win_detected and call_win is None:
+            logger.warning("Call popup closed before answer (recipient declined, busy, or line unavailable).")
+            return CallResult.DECLINED_OR_UNAVAILABLE
+
+        if call_win is not None:
+            call_win_detected = True
+
+        # Run non-intrusive OCR check
+        ocr_text = perform_ocr(timer_bbox)
+        match = timer_pattern.search(ocr_text)
+        if match:
+            detected_timer = match.group(0)
+            logger.info(f"Call answered! Timer detected: '{detected_timer}'")
+            return CallResult.ANSWERED
+
+        interruptible_sleep(1.0)
+
+    # Outcome 2: No Answer (Ring timeout reached without pick up)
+    logger.warning(f"Call was not answered within {ring_timeout} seconds. Hanging up...")
+    call_win = get_whatsapp_call_window()
+    if call_win:
+        end_x = call_win.left + int(call_win.width * 0.5)
+        end_y = call_win.top + int(call_win.height * 0.88)
+        logger.info(f"Clicking End Call button at: {end_x}, {end_y}")
+        force_click(end_x, end_y, hold_duration=0.1)
+        time.sleep(1.0)
+        try:
+            call_win.close()
+        except Exception:
+            pass
+    else:
+        end_x, end_y = end_call_coords
+        logger.info(f"Clicking configured End Call at: {end_x}, {end_y}")
+        force_click(end_x, end_y, hold_duration=0.1)
+
+    return CallResult.NO_ANSWER
+
+
+def monitor_active_call(sound_file: str, timer_bbox: dict):
+    """Monitors an active answered call. Exits cleanly when the call finishes."""
+    play_alert_sound(sound_file)
+    logger.info("Monitoring active call... Will exit automatically when the call ends.")
+
+    timer_pattern = re.compile(r"\d{1,2}:\d{2}")
+    no_timer_count = 0
+
+    while True:
+        check_stop()
+        interruptible_sleep(2.0)
+        
+        active_win = get_whatsapp_call_window()
+        ocr_text = perform_ocr(timer_bbox)
+
+        if timer_pattern.search(ocr_text):
+            no_timer_count = 0  # Call is active
+        else:
+            no_timer_count += 1
+            # Dual-Signal Termination: OCR missing for 8s AND window handle closed
+            call_ended = (no_timer_count >= 4) or (active_win is None)
+            if call_ended:
+                logger.info("Active call has ended. Closing call window...")
+                if active_win:
+                    try:
+                        active_win.close()
+                    except Exception as e:
+                        logger.error(f"Failed to close call window: {e}")
+                else:
+                    logger.info("Call window already closed.")
+                sys.exit(0)
+
+
+# ---------------------------------------------------------------------------
 # Main Automation Loop
 # ---------------------------------------------------------------------------
 
 def run_automation():
-    """Main execution loop to dial and monitor calls."""
-    # Start the global Esc emergency stop listener
+    """Main execution loop to dial and monitor calls using the state machine."""
     start_esc_listener()
     logger.info("Press Esc at any time to stop the bot safely.")
 
@@ -550,11 +649,11 @@ def run_automation():
     if config["call_button_1_coords"] == DEFAULT_CONFIG["call_button_1_coords"]:
         logger.warning("Coordinates are at default values. Run: python whatsapp_call_bot.py --calibrate")
 
-    max_retries    = config.get("max_retries", 10)
-    timeout_seconds = config.get("timeout_seconds", 7)
-    cooldown_min   = config.get("cooldown_min_seconds", 2.0)
-    cooldown_max   = config.get("cooldown_max_seconds", 5.0)
-    sound_file     = config.get("sound_file", "")
+    max_retries     = config.get("max_retries", 10)
+    timeout_seconds = config.get("timeout_seconds", 25) # Ring timeout default: 25 seconds
+    cooldown_min    = config.get("cooldown_min_seconds", 2.0)
+    cooldown_max    = config.get("cooldown_max_seconds", 5.0)
+    sound_file      = config.get("sound_file", "")
     
     # Interactive Prompts
     print("\n" + "="*55)
@@ -572,7 +671,6 @@ def run_automation():
     
     print("="*55 + "\n")
 
-    # Feature 3: Call Type Toggle - pick the right button coords
     if call_type == "video":
         btn1_coords = config.get("video_call_button_1_coords", config["call_button_1_coords"])
         btn2_coords = config.get("video_call_button_2_coords", config["call_button_2_coords"])
@@ -582,14 +680,11 @@ def run_automation():
         btn2_coords = config["call_button_2_coords"]
         logger.info("Call type selected: VOICE")
 
-    timer_pattern = re.compile(r"\d{1,2}:\d{2}")
-
     logger.info("Starting WhatsApp Call Automation Bot.")
-    logger.info(f"Parameters: max_retries={max_retries}, call_timeout={timeout_seconds}s, cooldown={cooldown_min}-{cooldown_max}s")
+    logger.info(f"Parameters: max_retries={max_retries}, ring_timeout={timeout_seconds}s, cooldown={cooldown_min}-{cooldown_max}s")
 
-    # Feature 2: Automated Contact Finder - open the target chat before starting
     if contact_name:
-        logger.info(f"Contact specified: '{contact_name}'. Opening their chat now...")
+        logger.info(f"Contact specified: '{contact_name}'. Opening chat...")
         if not open_contact_chat(contact_name):
             logger.error("Failed to open contact chat. Exiting.")
             sys.exit(1)
@@ -599,115 +694,36 @@ def run_automation():
         logger.info("No contact_name set in config. Assuming chat is already open.")
 
     for attempt in range(1, max_retries + 1):
-        # Feature 1: Check Esc stop at the top of every loop iteration
         check_stop()
-
         logger.info(f"--- CALL ATTEMPT {attempt} / {max_retries} ---")
 
-        # Focus the main WhatsApp window
-        if not focus_whatsapp_main_window():
-            logger.warning("Could not focus WhatsApp. Clicking coordinates blindly...")
+        result = dial_and_monitor_attempt(
+            btn1_coords=btn1_coords,
+            btn2_coords=btn2_coords,
+            ring_timeout=timeout_seconds,
+            timer_bbox=config["timer_bbox"],
+            end_call_coords=config["end_call_coords"]
+        )
 
-        focus_whatsapp_main_window()
-
-        # Click the call button(s)
-        call_1_x, call_1_y = btn1_coords
-        logger.info(f"Clicking Call Button 1 at: {call_1_x}, {call_1_y}")
-        force_click(call_1_x, call_1_y, hold_duration=0.12)
-
-        if btn2_coords:
-            time.sleep(0.8)
-            check_stop()
-            call_2_x, call_2_y = btn2_coords
-            logger.info(f"Clicking Call Button 2 at: {call_2_x}, {call_2_y}")
-            force_click(call_2_x, call_2_y, hold_duration=0.12)
-
-        # Wait up to 3 seconds for the call window to appear
-        logger.info("Waiting for WhatsApp call window to initialize...")
-        start_wait = time.time()
-        while time.time() - start_wait < 3.0:
-            check_stop()
-            if get_whatsapp_call_window() is not None:
-                break
-            interruptible_sleep(0.3)
-
-        # Monitor for connected call timer
-        logger.info(f"Monitoring call timer for {timeout_seconds} seconds...")
-        call_answered = False
-        start_time = time.time()
-        window_appeared = False
-
-        if get_whatsapp_call_window() is not None:
-            window_appeared = True
-            logger.info("WhatsApp Call window detected.")
-
-        while time.time() - start_time < timeout_seconds:
-            check_stop()
-            call_win = get_whatsapp_call_window()
-
-            if window_appeared and call_win is None:
-                logger.info("Call window closed. Bot stopping.")
-                sys.exit(0)
-
-            if call_win is not None:
-                window_appeared = True
-
-            ocr_text = perform_ocr(config["timer_bbox"])
-            match = timer_pattern.search(ocr_text)
-            if match:
-                detected_timer = match.group(0)
-                logger.info(f"Call answered! Timer detected: '{detected_timer}'")
-                call_answered = True
-                break
-
-            interruptible_sleep(1.0)
-
-        if call_answered:
-            logger.info("Call was successfully answered!")
-            # Feature 1 still active: allow Esc to stop even while call is active
-            play_alert_sound(sound_file)
-
-            logger.info("Monitoring active call... Will exit when the call ends.")
-            no_timer_count = 0
-            while True:
-                check_stop()
-                interruptible_sleep(2.0)
-                active_win = get_whatsapp_call_window()
-                ocr_text = perform_ocr(config["timer_bbox"])
-                if timer_pattern.search(ocr_text):
-                    no_timer_count = 0
-                else:
-                    no_timer_count += 1
-                    if no_timer_count >= 4:
-                        logger.info("Call ended (no timer for 8s). Closing call window...")
-                        if active_win:
-                            try:
-                                active_win.close()
-                            except Exception as e:
-                                logger.error(f"Failed to close call window: {e}")
-                        else:
-                            logger.info("Call window already gone. Exiting.")
-                        sys.exit(0)
+        if result == CallResult.USER_CANCELLED:
+            logger.info("Bot stopped by user (Esc key). Exiting.")
             sys.exit(0)
 
-        # Call was not answered - hang up and retry
-        logger.warning(f"Call not answered within {timeout_seconds}s. Hanging up...")
-        call_win = get_whatsapp_call_window()
-        if call_win:
-            end_x = call_win.left + int(call_win.width * 0.5)
-            end_y = call_win.top + int(call_win.height * 0.88)
-            logger.info(f"Clicking End Call button at: {end_x}, {end_y}")
-            force_click(end_x, end_y, hold_duration=0.1)
-            time.sleep(1.0)
-            try:
-                call_win.close()
-            except Exception:
-                pass
-        else:
-            end_x, end_y = config["end_call_coords"]
-            logger.info(f"Clicking configured End Call at: {end_x}, {end_y}")
-            force_click(end_x, end_y, hold_duration=0.1)
+        elif result == CallResult.ANSWERED:
+            logger.info("Call was successfully answered!")
+            monitor_active_call(sound_file, config["timer_bbox"])
+            sys.exit(0)
 
+        elif result == CallResult.DECLINED_OR_UNAVAILABLE:
+            logger.info("Call attempt was declined, busy, or line unavailable. Retrying after cooldown...")
+
+        elif result == CallResult.NO_ANSWER:
+            logger.info("Call reached ring timeout without answer. Retrying after cooldown...")
+
+        elif result == CallResult.WINDOW_FAILED:
+            logger.warning("WhatsApp window was unavailable. Retrying after cooldown...")
+
+        # Cooldown period before next retry
         check_stop()
         cooldown = random.uniform(cooldown_min, cooldown_max)
         logger.info(f"Cooldown: {cooldown:.2f}s before next attempt...")
@@ -730,7 +746,7 @@ def main():
             "  contact_name       : Name of the contact to search and call (leave empty to use open chat)\n"
             "  call_type          : 'voice' or 'video' (default: voice)\n"
             "  sound_file         : Path to a .wav file to play when call is answered\n"
-            "  timeout_seconds    : Seconds to wait before treating a call as unanswered (default: 7)\n"
+            "  timeout_seconds    : Ring timeout seconds before hanging up (default: 25)\n"
             "  max_retries        : Maximum number of call attempts (default: 10)\n"
             "  cooldown_min/max   : Random cooldown range (seconds) between retries\n"
         )
