@@ -41,7 +41,7 @@ except ImportError:
     logger.warning("playsound library is not installed or failed to import. Falling back to winsound.")
 
 # ---------------------------------------------------------------------------
-# Global stop flag — set to True when user presses Esc anywhere
+# Global stop flag - set to True when user presses Esc anywhere
 # ---------------------------------------------------------------------------
 _stop_requested = False
 
@@ -307,7 +307,7 @@ def open_contact_chat(contact_name: str) -> bool:
     """Searches for a contact by name in WhatsApp using the search bar and opens their chat.
     Returns True if the contact was found and chat opened, False otherwise."""
     if not contact_name or not contact_name.strip():
-        return True  # No contact specified — assume chat is already open
+        return True  # No contact specified - assume chat is already open
 
     logger.info(f"Searching for contact: '{contact_name}'")
 
@@ -572,7 +572,7 @@ def run_automation():
     
     print("="*55 + "\n")
 
-    # Feature 3: Call Type Toggle — pick the right button coords
+    # Feature 3: Call Type Toggle - pick the right button coords
     if call_type == "video":
         btn1_coords = config.get("video_call_button_1_coords", config["call_button_1_coords"])
         btn2_coords = config.get("video_call_button_2_coords", config["call_button_2_coords"])
@@ -587,7 +587,7 @@ def run_automation():
     logger.info("Starting WhatsApp Call Automation Bot.")
     logger.info(f"Parameters: max_retries={max_retries}, call_timeout={timeout_seconds}s, cooldown={cooldown_min}-{cooldown_max}s")
 
-    # Feature 2: Automated Contact Finder — open the target chat before starting
+    # Feature 2: Automated Contact Finder - open the target chat before starting
     if contact_name:
         logger.info(f"Contact specified: '{contact_name}'. Opening their chat now...")
         if not open_contact_chat(contact_name):
@@ -690,7 +690,7 @@ def run_automation():
                         sys.exit(0)
             sys.exit(0)
 
-        # Call was not answered — hang up and retry
+        # Call was not answered - hang up and retry
         logger.warning(f"Call not answered within {timeout_seconds}s. Hanging up...")
         call_win = get_whatsapp_call_window()
         if call_win:
