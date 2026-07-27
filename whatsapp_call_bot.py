@@ -335,9 +335,10 @@ def open_contact_chat(contact_name: str) -> bool:
         logger.error("Could not find WhatsApp window to click first search result.")
         return False
 
-    # Click the first item in the sidebar list (x=230, y=270 relative to window top-left)
+    # Click the first item in the sidebar list (x=230, y=330 relative to window top-left)
+    # y=330 lands in the middle of the first result, bypassing the "Chats" label header at y=260
     click_x = whatsapp_win.left + 230
-    click_y = whatsapp_win.top + 270
+    click_y = whatsapp_win.top + 330
     logger.info(f"Clicking first search result in sidebar at: {click_x}, {click_y}")
     
     force_click(click_x, click_y, hold_duration=0.1)
