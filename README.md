@@ -1,36 +1,38 @@
-# WhatsApp Desktop Call Automation Bot
+# WhatsApp Desktop Call Automation System
 
-An automated Python script designed to handle calling workflows on the WhatsApp Desktop application for Windows. It utilizes GUI automation, image processing, and Optical Recognition (OCR) to initiate calls, detect when the recipient answers, monitor the call duration, and automatically close the call window once the conversation ends.
+A production-grade Python automation system designed to manage dialing, connection detection, active call monitoring, and lifecycle management on WhatsApp Desktop for Windows. 
+
+The system leverages computer vision, dynamic window classification, and Optical Character Recognition (OCR) to deliver reliable automated calling workflows without requiring Administrator process elevation.
 
 ---
 
-## Features
+## Key Features
 
-- **Automated Dialing**: Automates the multi-step click sequence required to place a call in WhatsApp Desktop.
-- **Live Connection Detection (OCR)**: Uses Tesseract OCR and OpenCV image processing (upscaling, binarization, and inversion) to read the active call timer (e.g., `00:01`) directly from the screen.
-- **Resilient Focus Management**: Detects if the WhatsApp call window is minimized or micro-minimized (WhatsApp's Picture-in-Picture mode) and automatically restores and focuses it to keep the timer visible.
-- **Smart Hang-up Detection**: Detects if you or the recipient manually ends the call, terminating the script cleanly.
-- **Auto-Cleanup**: Monitors active calls and automatically closes the call window via OS commands when the call finishes.
-- **Failed Call Retries**: If a call is rejected, busy, offline, or goes unanswered, the bot automatically hangs up, waits for a randomized cooldown period (to prevent spam detection), and retries.
+- **Automated Dialing & Contact Selection**: Automatically searches for a contact by name (`Ctrl+F`), selects the contact from the sidebar results, and initiates Voice or Video calls.
+- **OCR Timer Connection Detection**: Uses PyTesseract and OpenCV preprocessing (grayscale, cubic upscaling, Otsu binarization, and inversion) to detect call duration timers (e.g., `00:01`) directly from screen screenshots.
+- **Orientation-Based Window Classifier**: Uses geometric aspect ratios to distinguish between landscape main chat windows and portrait active call popups. Restores micro-minimized call popups automatically.
+- **4-State Call Outcome Classification**: Distinguishes between Answered Calls, Unanswered Calls (No Answer), Missed/User Cancelled Calls, and Unavailable/Busy/Declined calls.
+- **Active Call Lifecycle Monitoring**: Monitors ongoing calls and automatically closes the call popup and terminates the bot when the conversation finishes (detected via 8-second timer absence).
+- **Asynchronous Global Emergency Stop**: Features a background daemon thread polling `Esc` (`VK_ESCAPE`) to allow immediate, non-blocking termination at any time without needing terminal window focus.
 
 ---
 
 ## Technology Stack
 
-- **Python 3**
-- **PyAutoGUI**: For controlling mouse movements and clicks.
-- **PyGetWindow**: For locating and managing the state of WhatsApp Desktop windows.
-- **OpenCV (cv2) & NumPy**: For image preprocessing (enhancing contrast and resizing) to optimize OCR accuracy.
-- **PyTesseract**: An interface for Google's Tesseract-OCR engine to read digits from the screen.
+- **Language**: Python 3.x
+- **Automation & Window Control**: PyAutoGUI, PyGetWindow
+- **Computer Vision & OCR**: OpenCV (`cv2`), PyTesseract, Pillow (`PIL`), NumPy
+- **Win32 System Integration**: `ctypes` (Win32 APIs)
+- **Pattern Matching**: Regular Expressions (`re`)
 
 ---
 
 ## Prerequisites
 
-1. **WhatsApp Desktop**: Make sure the official WhatsApp Desktop application is installed and logged in on Windows.
-2. **Tesseract-OCR**: Install Google's Tesseract OCR engine on Windows.
+1. **WhatsApp Desktop**: Official WhatsApp Desktop application installed and logged in on Windows.
+2. **Tesseract-OCR**: Google's Tesseract OCR engine installed on Windows.
    - [Download Installer](https://github.com/UB-Mannheim/tesseract/wiki)
-   - Note down the installation path (typically `C:\Program Files\Tesseract-OCR\tesseract.exe`).
+   - Installation path: `C:\Program Files\Tesseract-OCR\tesseract.exe`
 
 ---
 
@@ -50,51 +52,52 @@ An automated Python script designed to handle calling workflows on the WhatsApp 
 
 3. **Install Dependencies**:
    ```bash
-   pip install pyautogui opencv-python numpy pytesseract pygetwindow
+   pip install -r requirements.txt
    ```
 
 ---
 
-## Calibration & Usage
+## Usage Guide
 
-Before running the bot, you need to calibrate it to match your screen layout and resolution.
-
-### Step 1: Calibrate Click Coordinates
-Open the chat of the contact you want to call, maximize WhatsApp Desktop, and run:
+### 1. Calibration
+Run the interactive calibration mode to record button screen coordinates:
 ```bash
 python whatsapp_call_bot.py --calibrate
 ```
-Follow the interactive CLI instructions:
-- Hover your mouse over the top-right Call icon and press **Enter**.
-- Wait for the popup to show, hover your mouse over the green **Voice call** button, and press **Enter**.
+Follow the interactive prompt:
+- Specify whether your WhatsApp version requires a confirmation pop-up click.
+- Hover over the Voice and Video call buttons and press **Enter** to record their positions.
 
-This creates a local `whatsapp_config.json` file storing your screen coordinates.
-
-### Step 2: Test OCR Bounding Box
-Start a manual call. Once the call timer appears, run:
+### 2. Testing OCR Region Extraction
+Verify OCR timer detection accuracy while a call is active:
 ```bash
 python whatsapp_call_bot.py --test-ocr
 ```
-The script will capture the timer region and print the OCR output. Verify that the output correctly matches the timer digits (e.g., `00:04`).
+The utility saves `debug_ocr_raw.png` and `debug_ocr_processed.png` locally and prints the extracted timer text.
 
-### Step 3: Run the Bot
-Open the target contact's chat, maximize WhatsApp, and run:
+### 3. Running the Automation Bot
+Execute the main automation loop:
 ```bash
 python whatsapp_call_bot.py --run
 ```
-The bot will take over to click, dial, monitor, alert you upon connection, and clean up the call window when done.
+Follow the startup prompts:
+1. Enter contact name to search and open their chat (or press **Enter** to use currently open chat).
+2. Select call type (`voice` or `video`).
+
+Press **Esc** at any time to stop the bot immediately.
 
 ---
 
 ## Project Structure
 
-- `whatsapp_call_bot.py`: The main automation script containing calibration, OCR detection, active monitoring, and dialing loops.
-- `debug_call_window.py`: A diagnostic tool to verify the screen coordinates and dimensions of open WhatsApp windows.
-- `find_timer.py`: A helper utility to scan the screen for specific call timers.
-- `whatsapp_config.json`: Local settings containing custom click coordinates and timeouts (automatically created during calibration).
-- `.gitignore`: Excludes local configurations, debug screenshots, and virtual environments from commits.
+- `whatsapp_call_bot.py`: Main automation system containing window management, contact search, hover-aware clicking, OCR engine, call monitoring, and CLI interface.
+- `docs/engineering-iterations.md`: Detailed engineering log documenting the development evolution, trade-offs, failed experiments, and architectural postmortems.
+- `debug_call_window.py`: Diagnostic utility for verifying window bounds and DPI scaling factors.
+- `find_timer.py`: Diagnostic utility for locating timer coordinates across the display.
+- `requirements.txt`: Project package dependencies list.
+- `whatsapp_config.json`: Local settings containing custom click coordinates and user preferences (generated during calibration).
 
 ---
 
-## Disclaimer
-This project is for educational and automation demonstration purposes. Be mindful of rate-limiting policies and use responsibly to avoid spamming contacts.
+## License & Disclaimer
+This project is developed for educational and automation demonstration purposes. Use responsibly in compliance with relevant terms of service.
