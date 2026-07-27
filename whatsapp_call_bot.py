@@ -344,10 +344,6 @@ def open_contact_chat(contact_name: str) -> bool:
     force_click(click_x, click_y, hold_duration=0.1)
     time.sleep(1.0)
 
-    # Press Esc to clear search overlay and return to normal chat focus
-    pyautogui.press("escape")
-    time.sleep(0.5)
-
     logger.info(f"Opened chat for contact: '{contact_name}'")
     return True
 
