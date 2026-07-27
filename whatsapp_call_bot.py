@@ -121,6 +121,13 @@ def check_stop():
         logger.info("Bot stopped by user (Esc key). Exiting cleanly.")
         sys.exit(0)
 
+def interruptible_sleep(duration: float):
+    """Sleeps in small 100ms increments to verify and react to Esc key presses instantly."""
+    start = time.time()
+    while time.time() - start < duration:
+        check_stop()
+        time.sleep(0.1)
+
 
 # ---------------------------------------------------------------------------
 # Core utility functions
@@ -622,7 +629,7 @@ def run_automation():
             check_stop()
             if get_whatsapp_call_window() is not None:
                 break
-            time.sleep(0.3)
+            interruptible_sleep(0.3)
 
         # Monitor for connected call timer
         logger.info(f"Monitoring call timer for {timeout_seconds} seconds...")
@@ -653,7 +660,7 @@ def run_automation():
                 call_answered = True
                 break
 
-            time.sleep(1.0)
+            interruptible_sleep(1.0)
 
         if call_answered:
             logger.info("Call was successfully answered!")
@@ -664,7 +671,7 @@ def run_automation():
             no_timer_count = 0
             while True:
                 check_stop()
-                time.sleep(2.0)
+                interruptible_sleep(2.0)
                 active_win = get_whatsapp_call_window()
                 ocr_text = perform_ocr(config["timer_bbox"])
                 if timer_pattern.search(ocr_text):
@@ -704,7 +711,7 @@ def run_automation():
         check_stop()
         cooldown = random.uniform(cooldown_min, cooldown_max)
         logger.info(f"Cooldown: {cooldown:.2f}s before next attempt...")
-        time.sleep(cooldown)
+        interruptible_sleep(cooldown)
 
     logger.error(f"Reached max retry limit ({max_retries}) without answer. Exiting.")
     sys.exit(1)
