@@ -91,6 +91,7 @@ Press **Esc** at any time to stop the bot immediately.
 ## Project Structure
 
 - `whatsapp_call_bot.py`: Main automation system containing window management, contact search, hover-aware clicking, OCR engine, call monitoring, and CLI interface.
+- `docs/user-manual.md`: Comprehensive user manual documenting calibration, OCR verification, execution prompts, emergency controls, and troubleshooting.
 - `docs/engineering-iterations.md`: Detailed engineering log documenting the development evolution, trade-offs, failed experiments, and architectural postmortems.
 - `debug_call_window.py`: Diagnostic utility for verifying window bounds and DPI scaling factors.
 - `find_timer.py`: Diagnostic utility for locating timer coordinates across the display.
