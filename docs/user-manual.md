@@ -33,6 +33,9 @@ This document provides a detailed operational guide for configuring, calibrating
 
 ## 2. Calibration Mode (`--calibrate`)
 
+> [!NOTE]
+> **Display Scaling and Interface Zoom Compatibility**: The system supports various WhatsApp zoom levels (such as 70%, 80%, 90%, 100%, 125%) and display resolutions via dynamic percentage-based timer cropping and 4x image upscaling. If you change your WhatsApp application zoom level (`Ctrl +` / `Ctrl -`) or Windows Display Scaling, re-run `python whatsapp_call_bot.py --calibrate` to record new click coordinates for your target layout.
+
 Calibration records your display coordinates for WhatsApp call buttons and configures whether your application layout requires a confirmation pop-up click.
 
 ### Execution

@@ -59,6 +59,9 @@ The system leverages computer vision, dynamic window classification, and Optical
 
 ## Usage Guide
 
+> [!NOTE]
+> **Display Scaling and Interface Zoom Compatibility**: The system uses dynamic percentage-based geometry and 4x image upscaling to support different WhatsApp zoom levels (e.g. 70%, 80%, 90%, 100%, 125%) and display resolutions. If you alter your WhatsApp zoom level (`Ctrl +` / `Ctrl -`) or Windows Display Scaling, re-run `python whatsapp_call_bot.py --calibrate` to update button coordinates.
+
 ### 1. Calibration
 Run the interactive calibration mode to record button screen coordinates:
 ```bash
