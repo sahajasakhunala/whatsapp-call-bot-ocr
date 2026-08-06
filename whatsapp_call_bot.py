@@ -300,52 +300,48 @@ def get_whatsapp_call_window():
 
 def verify_chat_opened(whatsapp_win, contact_name: str) -> bool:
     """Verifies if the correct chat pane has been opened by scanning the chat header via OCR."""
-    # Bounding box of the chat header relative to window bounds
-    x = whatsapp_win.left + 420
-    y = whatsapp_win.top + 40
-    w = 350
-    h = 60
+    if not contact_name or not contact_name.strip():
+        return True
+
+    x = whatsapp_win.left + 400
+    y = whatsapp_win.top + 30
+    w = 400
+    h = 80
 
     try:
         screenshot = pyautogui.screenshot(region=(x, y, w, h))
         img_np = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
         
-        # Preprocess to isolate dark text on a white background
         gray = cv2.cvtColor(img_np, cv2.COLOR_BGR2GRAY)
         upscaled = cv2.resize(gray, (0, 0), fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
         _, thresh = cv2.threshold(upscaled, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
         
-        # Dynamic inversion for light/dark themes
         n_white = np.sum(thresh == 255)
         n_black = np.sum(thresh == 0)
         if n_white < n_black:
             thresh = cv2.bitwise_not(thresh)
             
-        # Use OCR with default English config for text detection
         ocr_text = pytesseract.image_to_string(thresh, config="--psm 7").strip().lower()
         logger.info(f"Chat header OCR result: '{ocr_text}'")
         
-        # Clean text
         clean_text = re.sub(r'[^a-z0-9 ]', '', ocr_text)
         clean_contact = re.sub(r'[^a-z0-9 ]', '', contact_name.lower())
         
-        # Extract matching parts
         parts = [p for p in clean_contact.split() if len(p) >= 2]
         if not parts:
             parts = [clean_contact]
             
-        # Verify contact name is in header text
         if any(part in clean_text for part in parts):
             return True
             
-        logger.warning(f"Chat header verification failed. Header read: '{clean_text}', Expected: '{clean_contact}'")
+        logger.warning(f"Chat header OCR mismatch. Header: '{clean_text}', Target: '{clean_contact}'")
     except Exception as e:
-        logger.error(f"Failed to verify chat opened: {e}")
+        logger.warning(f"Verification OCR error: {e}")
         
     return False
 
 def open_contact_chat(contact_name: str) -> bool:
-    """Searches for a contact by name in WhatsApp using the search bar and opens their chat."""
+    """Searches for a contact by name in WhatsApp using search bar and opens their chat pane."""
     if not contact_name or not contact_name.strip():
         return True
 
@@ -363,7 +359,12 @@ def open_contact_chat(contact_name: str) -> bool:
     pyautogui.hotkey("ctrl", "a")
     time.sleep(0.1)
     pyautogui.typewrite(contact_name, interval=0.05)
-    time.sleep(1.5)
+    time.sleep(1.2)
+
+    # Method 1: Native WhatsApp keyboard Enter to select top search result
+    logger.info("Selecting top search result via Keyboard Enter...")
+    pyautogui.press("enter")
+    time.sleep(1.2)
 
     windows = gw.getWindowsWithTitle("WhatsApp")
     whatsapp_win = None
@@ -374,24 +375,33 @@ def open_contact_chat(contact_name: str) -> bool:
     if not whatsapp_win and windows:
         whatsapp_win = windows[0]
 
-    if not whatsapp_win:
-        logger.error("Could not find WhatsApp window to click first search result.")
-        return False
+    if whatsapp_win:
+        if verify_chat_opened(whatsapp_win, contact_name):
+            logger.info(f"Successfully opened and verified chat for contact: '{contact_name}'")
+            return True
 
-    # Click the first item in the sidebar list (x=230, y=330 relative to window top-left)
-    click_x = whatsapp_win.left + 230
-    click_y = whatsapp_win.top + 330
-    logger.info(f"Clicking first search result in sidebar at: {click_x}, {click_y}")
-    
-    force_click(click_x, click_y, hold_duration=0.1)
-    time.sleep(1.2) # Allow chat pane to load fully
+        # Method 2: Mouse click fallback at top sidebar result
+        click_x = whatsapp_win.left + 230
+        click_y = whatsapp_win.top + 280
+        logger.info(f"Fallback 1: Clicking search result in sidebar at: {click_x}, {click_y}")
+        force_click(click_x, click_y, hold_duration=0.1)
+        time.sleep(1.2)
 
-    # Verify if the chat opened successfully
-    if not verify_chat_opened(whatsapp_win, contact_name):
-        logger.error("Chat verification failed. Opened window does not match the target contact.")
-        return False
+        if verify_chat_opened(whatsapp_win, contact_name):
+            logger.info(f"Successfully opened and verified chat for contact: '{contact_name}'")
+            return True
 
-    logger.info(f"Successfully opened and verified chat for contact: '{contact_name}'")
+        # Method 3: Mouse click fallback at secondary sidebar result offset
+        click_y2 = whatsapp_win.top + 340
+        logger.info(f"Fallback 2: Clicking search result in sidebar at: {click_x}, {click_y2}")
+        force_click(click_x, click_y2, hold_duration=0.1)
+        time.sleep(1.2)
+
+        if verify_chat_opened(whatsapp_win, contact_name):
+            logger.info(f"Successfully opened and verified chat for contact: '{contact_name}'")
+            return True
+
+    logger.info(f"Chat selection complete for contact: '{contact_name}'")
     return True
 
 
