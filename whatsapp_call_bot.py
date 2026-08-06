@@ -619,15 +619,15 @@ def dial_and_monitor_attempt(btn1_coords: list, btn2_coords: list, ring_timeout:
         logger.error("Could not focus WhatsApp main window. Aborting click attempt safely.")
         return CallResult.WINDOW_FAILED
 
-    # Click the call button(s) - dynamically resolved relative to active WhatsApp window bounds
-    call_1_x, call_1_y = resolve_window_relative_coords(btn1_coords, default_offset_right=150, default_offset_top=65)
+    # Click the call button(s) exactly as calibrated
+    call_1_x, call_1_y = btn1_coords
     logger.info(f"Clicking Call Button 1 at: {call_1_x}, {call_1_y}")
     force_click(call_1_x, call_1_y, hold_duration=0.12)
 
     if btn2_coords:
         time.sleep(0.8)
         check_stop()
-        call_2_x, call_2_y = resolve_window_relative_coords(btn2_coords, default_offset_right=300, default_offset_top=300)
+        call_2_x, call_2_y = btn2_coords
         logger.info(f"Clicking Call Button 2 at: {call_2_x}, {call_2_y}")
         force_click(call_2_x, call_2_y, hold_duration=0.12)
 
