@@ -298,9 +298,37 @@ def get_whatsapp_call_window():
 # Automated Contact Finder
 # ---------------------------------------------------------------------------
 
+def set_clipboard_text(text: str):
+    """Sets Unicode/Emoji text onto the Windows Clipboard using native Win32 APIs."""
+    import ctypes
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    
+    try:
+        import pyperclip
+        pyperclip.copy(text)
+        return
+    except Exception:
+        pass
+
+    user32.OpenClipboard(None)
+    user32.EmptyClipboard()
+    encoded = text.encode("utf-16-le") + b"\x00\x00"
+    h_mem = kernel32.GlobalAlloc(0x0042, len(encoded))
+    p_mem = kernel32.GlobalLock(h_mem)
+    ctypes.memmove(p_mem, encoded, len(encoded))
+    kernel32.GlobalUnlock(h_mem)
+    user32.SetClipboardData(13, h_mem)  # 13 = CF_UNICODETEXT
+    user32.CloseClipboard()
+
 def verify_chat_opened(whatsapp_win, contact_name: str) -> bool:
     """Verifies if the correct chat pane has been opened by scanning the chat header via OCR."""
     if not contact_name or not contact_name.strip():
+        return True
+
+    clean_contact = re.sub(r'[^a-z0-9 ]', '', contact_name.lower()).strip()
+    # Skip text OCR verification if the contact name consists purely of emojis/symbols
+    if not clean_contact:
         return True
 
     x = whatsapp_win.left + 400
@@ -325,7 +353,6 @@ def verify_chat_opened(whatsapp_win, contact_name: str) -> bool:
         logger.info(f"Chat header OCR result: '{ocr_text}'")
         
         clean_text = re.sub(r'[^a-z0-9 ]', '', ocr_text)
-        clean_contact = re.sub(r'[^a-z0-9 ]', '', contact_name.lower())
         
         parts = [p for p in clean_contact.split() if len(p) >= 2]
         if not parts:
@@ -358,7 +385,11 @@ def open_contact_chat(contact_name: str) -> bool:
 
     pyautogui.hotkey("ctrl", "a")
     time.sleep(0.1)
-    pyautogui.typewrite(contact_name, interval=0.05)
+
+    # Use clipboard copy & paste (Ctrl+V) to support all emojis and Unicode characters
+    set_clipboard_text(contact_name)
+    time.sleep(0.1)
+    pyautogui.hotkey("ctrl", "v")
     time.sleep(1.2)
 
     # Method 1: Native WhatsApp keyboard Enter to select top search result
