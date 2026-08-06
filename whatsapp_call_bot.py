@@ -566,6 +566,36 @@ def test_ocr_dryrun():
     print("="*50 + "\n")
 
 
+def resolve_window_relative_coords(coords: list, default_offset_right: int = 150, default_offset_top: int = 65) -> tuple:
+    """Calculates screen coordinates relative to active WhatsApp main window top-right corner to ensure accurate clicks regardless of window positioning."""
+    windows = [w for w in gw.getWindowsWithTitle("WhatsApp") if w.title == "WhatsApp" and (w.width > w.height or w.width >= 1000)]
+    if not windows:
+        windows = gw.getWindowsWithTitle("WhatsApp")
+    
+    if windows and coords and len(coords) >= 2:
+        w = windows[0]
+        x, y = coords[0], coords[1]
+        
+        # Calculate offsets relative to window top-right
+        offset_right = w.right - x if (w.left - 200 <= x <= w.right + 200) else default_offset_right
+        offset_top = y - w.top if (w.top - 100 <= y <= w.bottom + 100) else default_offset_top
+        
+        # Sanity bounds check for top-right call control area
+        if offset_right < 30 or offset_right > 600:
+            offset_right = default_offset_right
+        if offset_top < 5 or offset_top > 200:
+            offset_top = default_offset_top
+            
+        target_x = int(w.right - offset_right)
+        target_y = int(w.top + offset_top)
+        return target_x, target_y
+        
+    if coords and len(coords) >= 2:
+        return int(coords[0]), int(coords[1])
+        
+    return 1740, 84
+
+
 # ---------------------------------------------------------------------------
 # Dialing & Attempt State Handler
 # ---------------------------------------------------------------------------
@@ -579,15 +609,15 @@ def dial_and_monitor_attempt(btn1_coords: list, btn2_coords: list, ring_timeout:
         logger.error("Could not focus WhatsApp main window. Aborting click attempt safely.")
         return CallResult.WINDOW_FAILED
 
-    # Click the call button(s)
-    call_1_x, call_1_y = btn1_coords
+    # Click the call button(s) - dynamically resolved relative to active WhatsApp window bounds
+    call_1_x, call_1_y = resolve_window_relative_coords(btn1_coords, default_offset_right=150, default_offset_top=65)
     logger.info(f"Clicking Call Button 1 at: {call_1_x}, {call_1_y}")
     force_click(call_1_x, call_1_y, hold_duration=0.12)
 
     if btn2_coords:
         time.sleep(0.8)
         check_stop()
-        call_2_x, call_2_y = btn2_coords
+        call_2_x, call_2_y = resolve_window_relative_coords(btn2_coords, default_offset_right=300, default_offset_top=300)
         logger.info(f"Clicking Call Button 2 at: {call_2_x}, {call_2_y}")
         force_click(call_2_x, call_2_y, hold_duration=0.12)
 
